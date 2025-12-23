@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FileFolio - Document organization</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>FileFolio</h1>
+            <p>Drop your PDFs to organize them automatically</p>
+        </header>
+
+        <main>
+            <div id="drop-zone" class="drop-zone">
+                <div class="drop-zone-content">
+                    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                    <p>Drag & drop PDF files here</p>
+                    <p class="hint">or click to browse</p>
+                    <input type="file" id="file-input" accept=".pdf" multiple hidden>
+                </div>
+            </div>
+
+            <div id="status" class="status"></div>
+
+            <section class="search-section">
+                <div class="search-container">
+                    <input type="text" id="search-input" placeholder="Search documents by name, content, tags, or category..." />
+                    <button id="clear-search" class="clear-btn" style="display: none;">&times;</button>
+                </div>
+            </section>
+
+            <section class="documents-section">
+                <div class="documents-header">
+                    <h2>Documents</h2>
+                    <div class="header-controls">
+                        <button id="download-selected-btn" class="btn btn-primary" style="display: none;" title="Download selected documents">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="7 10 12 15 17 10"></polyline>
+                                <line x1="12" y1="15" x2="12" y2="3"></line>
+                            </svg>
+                            <span id="download-btn-text">Download</span>
+                        </button>
+                        <button id="dark-mode-toggle" class="view-btn" title="Toggle dark mode">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+                            </svg>
+                        </button>
+                        <div class="view-toggle">
+                            <button id="grid-view-btn" class="view-btn active" title="Grid view">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="3" y="3" width="7" height="7"></rect>
+                                    <rect x="14" y="3" width="7" height="7"></rect>
+                                    <rect x="14" y="14" width="7" height="7"></rect>
+                                    <rect x="3" y="14" width="7" height="7"></rect>
+                                </svg>
+                            </button>
+                            <button id="table-view-btn" class="view-btn" title="Table view">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="3" y1="6" x2="21" y2="6"></line>
+                                    <line x1="3" y1="12" x2="21" y2="12"></line>
+                                    <line x1="3" y1="18" x2="21" y2="18"></line>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div id="documents-list" class="documents-list">
+                    <p class="empty-state">No documents yet. Upload some PDFs to get started!</p>
+                </div>
+                <table id="documents-table" class="documents-table" style="display: none;">
+                    <thead>
+                        <tr>
+                            <th style="width: 40px;">
+                                <input type="checkbox" id="select-all-checkbox" title="Select all">
+                            </th>
+                            <th data-sort="original_filename" class="sortable">
+                                Filename
+                                <span class="sort-indicator"></span>
+                            </th>
+                            <th data-sort="category" class="sortable">
+                                Category
+                                <span class="sort-indicator"></span>
+                            </th>
+                            <th data-sort="tags">
+                                Tags
+                            </th>
+                            <th data-sort="upload_date" class="sortable sorted-desc">
+                                Upload date
+                                <span class="sort-indicator">▼</span>
+                            </th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr class="empty-state-row">
+                            <td colspan="6">
+                                <p class="empty-state">No documents yet. Upload some PDFs to get started!</p>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+        </main>
+    </div>
+
+    <!-- Edit document modal -->
+    <div id="edit-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Edit document</h2>
+                <button class="modal-close" onclick="closeEditModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="edit-form">
+                    <input type="hidden" id="edit-doc-id">
+
+                    <div class="form-group">
+                        <label for="edit-filename">Filename</label>
+                        <input type="text" id="edit-filename" readonly>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="edit-category">Category</label>
+                        <select id="edit-category" required>
+                            <option value="Invoice">Invoice</option>
+                            <option value="Receipt">Receipt</option>
+                            <option value="Contract">Contract</option>
+                            <option value="Letter">Letter</option>
+                            <option value="Report">Report</option>
+                            <option value="Form">Form</option>
+                            <option value="Statement">Statement</option>
+                            <option value="Legal">Legal</option>
+                            <option value="Medical">Medical</option>
+                            <option value="Tax">Tax</option>
+                            <option value="Insurance">Insurance</option>
+                            <option value="Other">Other</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="edit-tags">Tags</label>
+                        <div class="tags-input-container">
+                            <div id="selected-tags" class="selected-tags"></div>
+                            <input type="text" id="edit-tags" placeholder="Type to add tags...">
+                            <div id="tag-suggestions" class="tag-suggestions" style="display: none;"></div>
+                        </div>
+                    </div>
+
+                    <div class="modal-actions">
+                        <button type="button" class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save changes</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Preview document modal -->
+    <div id="preview-modal" class="modal modal-large" style="display: none;">
+        <div class="modal-content modal-content-large">
+            <div class="modal-header">
+                <div class="preview-header-content">
+                    <h2 id="preview-title">Document preview</h2>
+                    <div class="preview-actions">
+                        <button class="btn-icon" onclick="downloadDocument()" title="Download">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="7 10 12 15 17 10"></polyline>
+                                <line x1="12" y1="15" x2="12" y2="3"></line>
+                            </svg>
+                        </button>
+                        <button class="btn-icon" onclick="openInNewTab()" title="Open in new tab">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                                <polyline points="15 3 21 3 21 9"></polyline>
+                                <line x1="10" y1="14" x2="21" y2="3"></line>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <button class="modal-close" onclick="closePreviewModal()">&times;</button>
+            </div>
+            <div class="modal-body modal-body-preview">
+                <iframe id="pdf-viewer" width="100%" height="100%" frameborder="0"></iframe>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

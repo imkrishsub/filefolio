@@ -33,9 +33,13 @@ wheels/
 # Project specific
 uploads/
 data/
+thumbnails/
 *.db
 *.sqlite
 *.sqlite3
+
+# Utility scripts
+regenerate_thumbnails.py
 
 # OS
 .DS_Store

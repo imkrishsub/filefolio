@@ -2,6 +2,8 @@
 
 A local-first document organization tool that automatically tags, categorizes, and renames your PDF files using AI. Keep your documents private while enjoying smart organization powered by local LLMs.
 
+![FileFolio Preview](preview.jpg)
+
 ## Features
 
 - **Smart organization** - AI-powered automatic categorization, tagging, and filename generation

@@ -10,6 +10,7 @@ A local-first document organization tool that automatically tags, categorizes, a
 
 - **Smart organization** - AI-powered automatic categorization, tagging, and filename generation
 - **Privacy-first** - All processing happens locally on your machine, no cloud services
+- **Multi-language support** - UI available in multiple languages
 - **Drag & drop interface** - Simple and intuitive file upload
 - **Full-text search** - Search through document content and metadata
 - **Thumbnail previews** - Visual preview of your documents
@@ -71,12 +72,10 @@ PORT=8080 python backend/main.py
 ## Testing
 
 ```bash
-pytest tests/test_api.py tests/test_basic.py tests/test_pdf_processing.py
+pytest
 ```
 
-**39 tests passing** - Full API and functionality coverage.
-
-For detailed testing documentation, see [tests/README.md](tests/README.md).
+Full API and functionality coverage including unit tests, integration tests, and frontend tests.
 
 ## Project structure
 
@@ -86,12 +85,15 @@ filefolio/
 │   └── main.py          # FastAPI server
 ├── frontend/
 │   ├── static/
-│   │   ├── app.js      # Frontend JavaScript
-│   │   └── style.css   # Styles
+│   │   ├── app.js       # Frontend JavaScript
+│   │   ├── style.css    # Styles
+│   │   └── i18n.json    # Translations
 │   └── templates/
-│       └── index.html  # Main interface
-├── uploads/            # PDF storage (created on first run)
-├── data/               # Database (created on first run)
+│       └── index.html   # Main interface
+├── tests/               # Test suite
+├── uploads/             # PDF storage (created on first run)
+├── thumbnails/          # Document thumbnails (created on first run)
+├── data/                # Database (created on first run)
 └── requirements.txt
 ```
 

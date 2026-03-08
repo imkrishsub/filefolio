@@ -3,10 +3,11 @@
 ## Active
 
 ### Documentation
-- [ ] Show Ko-fi link in README.md in a prominent manner
+- [x] Show Ko-fi link in README.md in a prominent manner
   - Date added: 2026-03-07
+  - Date completed: 2026-03-08
   - Priority: high
-  - Notes: Add Ko-fi donation/support link prominently in the README
+  - Notes: Added Ko-fi donation button to both README.md and web interface header
 
 ### Core functionality (MVP)
 - [ ] Create organized folder structure for stored PDFs

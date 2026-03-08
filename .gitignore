@@ -47,4 +47,4 @@ Thumbs.db
 frontend/static/style.css.backup
 
 # Claude Code
-.claude/settings.local.json
+.claude/

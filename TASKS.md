@@ -54,10 +54,11 @@
   - Priority: medium
   - Notes: Better feedback for failed uploads, file size limits, corrupted PDFs
 
-- [ ] Implement loading states and animations
+- [x] Implement loading states and animations
   - Date added: 2025-10-27
+  - Date completed: 2026-03-08
   - Priority: low
-  - Notes: Improve UX during file processing
+  - Notes: Implemented page load fade-in, skeleton loaders, document card animations, thumbnail lazy loading, search loading indicator, and button loading states
 
 - [x] Create automated tests
   - Date added: 2025-10-27

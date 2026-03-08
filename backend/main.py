@@ -538,17 +538,21 @@ def process_document(text: str, filename: str):
     try:
         prompt = f"""Analyze this document excerpt and provide metadata.
 
-CRITICAL REQUIREMENT - TAGS MUST BE IN ENGLISH:
+CRITICAL REQUIREMENT - TAGS MUST BE IN ENGLISH AND PROPERLY FORMATTED:
 - Even if the document is in German, French, or any other language, tags MUST be in English
 - TRANSLATE concepts to English tags (e.g., "Lohnabrechnung" → "payroll" or "salary", "Brutto" → "gross")
 - Do NOT copy German words directly into tags
+- Do NOT use years as tags (e.g., avoid "2024", "2023", etc.)
+- Do NOT use very short tags (minimum 3 characters)
+- Use spaces, NOT underscores (e.g., "birth certificate" not "birth_certificate")
+- Keep tags lowercase and simple (e.g., "invoice", "payroll", "salary", "tax")
 - Existing tags in the system: {existing_tags_str}
 - STRONGLY PREFER to reuse existing tags when they are relevant
 - Only create new English tags if existing tags don't apply
-- Keep tags lowercase and simple (e.g., "invoice", "payroll", "salary", "tax", "2024")
 
 Provide:
-1. A category (choose one: Invoice, Receipt, Contract, Letter, Report, Form, Statement, Legal, Medical, Tax, Insurance, Other)
+1. A category - YOU MUST choose EXACTLY ONE from this list (use the exact spelling):
+   Invoice, Receipt, Contract, Letter, Report, Form, Statement, Legal, Medical, Tax, Insurance, Other
 2. Relevant tags (3-5 English keywords that describe the document)
 
 Document excerpt:
@@ -569,19 +573,64 @@ Respond in JSON format:
         # Parse response
         response_text = response["message"]["content"]
 
+        # Define valid categories
+        VALID_CATEGORIES = [
+            "Invoice", "Receipt", "Contract", "Letter", "Report",
+            "Form", "Statement", "Legal", "Medical", "Tax",
+            "Insurance", "Other"
+        ]
+
         # Extract JSON from response (handle markdown code blocks)
         json_match = re.search(r"\{[\s\S]*\}", response_text)
         if json_match:
             result = json.loads(json_match.group())
-            category = result.get("category", "Other")
+            raw_category = result.get("category", "Other")
             tags = result.get("tags", [])
 
-            # Filter out non-English tags (basic check for common German/non-English chars)
+            # Normalize and validate category (strict matching)
+            category = "Other"  # default fallback
+
+            # First try exact match (case-insensitive)
+            for valid_cat in VALID_CATEGORIES:
+                if valid_cat.lower() == raw_category.lower().strip():
+                    category = valid_cat
+                    break
+
+            # If no exact match, try partial match as fallback
+            if category == "Other":
+                for valid_cat in VALID_CATEGORIES:
+                    if valid_cat.lower() in raw_category.lower():
+                        category = valid_cat
+                        break
+
+            # Filter out non-English tags and unwanted patterns
             filtered_tags = []
             for tag in tags:
-                # Remove tags with umlauts or other non-English characters
-                if not re.search(r"[äöüßÄÖÜ]", tag):
-                    filtered_tags.append(tag.lower())
+                # Normalize: lowercase, strip, replace underscores with spaces
+                tag_normalized = tag.lower().strip().replace('_', ' ')
+
+                # Remove extra spaces
+                tag_normalized = re.sub(r'\s+', ' ', tag_normalized)
+
+                # Skip empty tags
+                if not tag_normalized:
+                    continue
+
+                # Skip tags with non-ASCII characters (German umlauts, etc.)
+                if not tag_normalized.isascii():
+                    continue
+
+                # Skip year tags (4-digit numbers)
+                if re.match(r"^\d{4}$", tag_normalized):
+                    continue
+
+                # Skip very short tags (less than 3 characters)
+                if len(tag_normalized) < 3:
+                    continue
+
+                # Skip duplicate tags
+                if tag_normalized not in filtered_tags:
+                    filtered_tags.append(tag_normalized)
 
             # If all tags were filtered out or empty, ensure we have at least one tag
             if not filtered_tags:

@@ -25,6 +25,94 @@ let selectedTags = [];
 let currentPreviewDocId = null;
 let selectedDocuments = new Set();
 
+// i18n state
+let currentLanguage = 'en';
+let translations = {};
+
+// i18n functions
+async function loadTranslations() {
+    try {
+        const response = await fetch('/static/i18n.json');
+        translations = await response.json();
+    } catch (error) {
+        console.error('Error loading translations:', error);
+    }
+}
+
+function detectBrowserLanguage() {
+    const browserLang = navigator.language || navigator.userLanguage;
+    const langCode = browserLang.split('-')[0];
+    return ['en', 'es', 'fr', 'de', 'zh'].includes(langCode) ? langCode : 'en';
+}
+
+function initLanguage() {
+    const savedLang = localStorage.getItem('language');
+    currentLanguage = savedLang || detectBrowserLanguage();
+
+    // Set the language selector value
+    const languageSelect = document.getElementById('language-select');
+    if (languageSelect) {
+        languageSelect.value = currentLanguage;
+    }
+
+    updatePageLanguage();
+}
+
+function setLanguage(lang) {
+    console.log('Switching language to:', lang);
+    currentLanguage = lang;
+    localStorage.setItem('language', lang);
+    console.log('Translations available:', Object.keys(translations));
+    console.log('Sample translation (category.invoice):', t('category.invoice'));
+    updatePageLanguage();
+}
+
+function t(key, params = {}) {
+    if (!translations[currentLanguage]) {
+        console.warn('No translations loaded for language:', currentLanguage);
+        return key;
+    }
+    let text = translations[currentLanguage]?.[key] || translations['en']?.[key] || key;
+    Object.keys(params).forEach(param => {
+        text = text.replace(`{${param}}`, params[param]);
+    });
+    return text;
+}
+
+function translateCategory(category) {
+    if (!category) return '';
+    const categoryKey = `category.${category.toLowerCase()}`;
+    const translated = t(categoryKey);
+    // If translation returns the key itself (meaning no translation found), return original category
+    return translated !== categoryKey ? translated : category;
+}
+
+function translateTag(tag) {
+    // Try to translate tag as a category first
+    const categoryKey = `category.${tag.toLowerCase()}`;
+    const translated = t(categoryKey);
+    // If translation returns the key itself, the tag isn't a category, return original
+    return translated !== categoryKey ? translated : tag;
+}
+
+function updatePageLanguage() {
+    document.querySelectorAll('[data-i18n]').forEach(element => {
+        const key = element.getAttribute('data-i18n');
+        if (element.tagName === 'INPUT' && element.type !== 'checkbox') {
+            element.placeholder = t(key);
+        } else {
+            element.textContent = t(key);
+        }
+    });
+
+    document.querySelectorAll('[data-i18n-title]').forEach(element => {
+        const key = element.getAttribute('data-i18n-title');
+        element.title = t(key);
+    });
+
+    renderDocuments();
+}
+
 // Initialize dark mode from localStorage
 const initDarkMode = () => {
     const darkMode = localStorage.getItem('darkMode') === 'true';
@@ -41,9 +129,24 @@ darkModeToggle.addEventListener('click', () => {
 });
 
 // Initialize
-initDarkMode();
-loadDocuments();
-loadAllTags();
+async function init() {
+    await loadTranslations();
+    initLanguage();
+    initDarkMode();
+
+    // Setup language selector event listener after translations are loaded
+    const languageSelect = document.getElementById('language-select');
+    if (languageSelect) {
+        languageSelect.addEventListener('change', (e) => {
+            setLanguage(e.target.value);
+        });
+    }
+
+    loadDocuments();
+    loadAllTags();
+}
+
+init();
 
 // Click to browse
 dropZone.addEventListener('click', () => {
@@ -76,7 +179,7 @@ async function handleFiles(files) {
     const pdfFiles = Array.from(files).filter(file => file.name.endsWith('.pdf'));
 
     if (pdfFiles.length === 0) {
-        showStatus('Please upload PDF files only', 'error');
+        showStatus(t('upload.pdf_only'), 'error');
         return;
     }
 
@@ -96,7 +199,7 @@ async function uploadFile(file) {
         <div id="${progressId}" class="upload-progress">
             <div class="upload-progress-header">
                 <span class="upload-filename">${file.name}</span>
-                <span class="upload-status">Uploading...</span>
+                <span class="upload-status">${t('upload.uploading')}</span>
             </div>
             <div class="progress-bar">
                 <div class="progress-fill" style="width: 0%"></div>
@@ -118,7 +221,7 @@ async function uploadFile(file) {
                     // Upload progress: 0-90%
                     const percentComplete = (e.loaded / e.total) * 90;
                     progressFill.style.width = percentComplete + '%';
-                    statusText.textContent = 'Uploading...';
+                    statusText.textContent = t('upload.uploading');
                 }
             });
 
@@ -144,7 +247,7 @@ async function uploadFile(file) {
         });
 
         // Upload complete, now processing
-        statusText.textContent = 'Processing (extracting text, running OCR if needed)...';
+        statusText.textContent = t('upload.processing');
         progressFill.style.width = '95%';
         progressFill.classList.add('processing');
 
@@ -154,7 +257,7 @@ async function uploadFile(file) {
         progressFill.classList.remove('processing');
         progressFill.style.width = '100%';
 
-        statusText.textContent = 'Complete!';
+        statusText.textContent = t('upload.complete');
         progressElement.classList.add('success');
 
         setTimeout(() => {
@@ -165,7 +268,7 @@ async function uploadFile(file) {
     } catch (error) {
         // Check if it's a duplicate error (409 Conflict)
         if (error.message.includes('Duplicate file detected')) {
-            statusText.textContent = 'Duplicate detected';
+            statusText.textContent = t('upload.duplicate');
             const duplicateMsg = document.createElement('div');
             duplicateMsg.style.fontSize = '0.85rem';
             duplicateMsg.style.marginTop = '0.25rem';
@@ -173,7 +276,7 @@ async function uploadFile(file) {
             duplicateMsg.textContent = error.message.replace('Duplicate file detected. ', '');
             progressElement.querySelector('.upload-progress-header').appendChild(duplicateMsg);
         } else {
-            statusText.textContent = 'Failed!';
+            statusText.textContent = t('upload.failed');
         }
 
         progressElement.classList.add('error');
@@ -319,8 +422,8 @@ async function loadDocuments() {
 function renderDocuments() {
     const hasSearch = searchInput.value;
     const emptyMessage = hasSearch
-        ? 'No documents match your search. Try different keywords.'
-        : 'No documents yet. Upload some PDFs to get started!';
+        ? t('documents.no_results')
+        : t('documents.empty');
 
     if (currentView === 'grid') {
         documentsList.style.display = 'grid';
@@ -339,7 +442,7 @@ function renderDocuments() {
         if (documentsData.length === 0) {
             tbody.innerHTML = `
                 <tr class="empty-state-row">
-                    <td colspan="4">
+                    <td colspan="6">
                         <p class="empty-state">${emptyMessage}</p>
                     </td>
                 </tr>
@@ -352,9 +455,10 @@ function renderDocuments() {
 
 // Create document card HTML
 function createDocumentCard(doc) {
-    const tags = doc.tags.map(tag => `<span class="tag">${tag}</span>`).join('');
+    const tags = doc.tags.map(tag => `<span class="tag">${translateTag(tag)}</span>`).join('');
     const thumbnailUrl = doc.thumbnail || '/static/placeholder.png';
     const isSelected = selectedDocuments.has(doc.id);
+    const translatedCategory = translateCategory(doc.category);
 
     return `
         <div class="document-card ${isSelected ? 'selected' : ''}" data-doc-id="${doc.id}">
@@ -367,7 +471,7 @@ function createDocumentCard(doc) {
                     <div class="document-title">
                         <h3>${doc.auto_filename || doc.original_filename}</h3>
                     </div>
-                    <span class="document-category">${doc.category}</span>
+                    <span class="document-category">${translatedCategory}</span>
                 </div>
                 ${tags ? `<div class="document-tags">${tags}</div>` : ''}
             </div>
@@ -391,7 +495,7 @@ function createDocumentCard(doc) {
 
 // Create document table row HTML
 function createDocumentRow(doc) {
-    const tags = doc.tags.map(tag => `<span class="tag">${tag}</span>`).join('');
+    const tags = doc.tags.map(tag => `<span class="tag">${translateTag(tag)}</span>`).join('');
     const displayFilename = doc.auto_filename || doc.original_filename;
     const uploadDate = new Date(doc.upload_date).toLocaleDateString('en-US', {
         year: 'numeric',
@@ -399,6 +503,7 @@ function createDocumentRow(doc) {
         day: 'numeric'
     });
     const isSelected = selectedDocuments.has(doc.id);
+    const translatedCategory = translateCategory(doc.category);
 
     return `
         <tr data-doc-id="${doc.id}">
@@ -409,7 +514,7 @@ function createDocumentRow(doc) {
                 <span class="filename-link">${displayFilename}</span>
             </td>
             <td onclick="previewDocument(${doc.id}, '${displayFilename.replace(/'/g, "\\'")}')" style="cursor: pointer;">
-                <span class="document-category">${doc.category}</span>
+                <span class="document-category">${translatedCategory}</span>
             </td>
             <td class="tags-cell" onclick="previewDocument(${doc.id}, '${displayFilename.replace(/'/g, "\\'")}')" style="cursor: pointer;">
                 ${tags}
@@ -625,18 +730,18 @@ async function saveDocumentChanges() {
             throw new Error('Failed to update document');
         }
 
-        showStatus('Document updated successfully', 'success');
+        showStatus(t('status.updated'), 'success');
         closeEditModal();
         loadDocuments();
         loadAllTags(); // Refresh tags list
     } catch (error) {
-        showStatus('Error updating document: ' + error.message, 'error');
+        showStatus(t('error.update_failed') + ': ' + error.message, 'error');
     }
 }
 
 // Delete document
 async function deleteDocument(id, filename) {
-    if (!confirm(`Are you sure you want to delete "${filename}"? This action cannot be undone.`)) {
+    if (!confirm(t('confirm.delete', { filename }))) {
         return;
     }
 
@@ -651,11 +756,11 @@ async function deleteDocument(id, filename) {
             throw new Error(errorMessage);
         }
 
-        showStatus('Document deleted successfully', 'success');
+        showStatus(t('status.deleted'), 'success');
         loadDocuments();
     } catch (error) {
         console.error('Delete error:', error);
-        showStatus('Error deleting document: ' + error.message, 'error');
+        showStatus(t('error.delete_failed') + ': ' + error.message, 'error');
     }
 }
 
@@ -714,7 +819,7 @@ function updateSelectionUI() {
     // Show/hide download button
     if (selectedDocuments.size > 0) {
         downloadBtn.style.display = 'flex';
-        downloadBtnText.textContent = `Download (${selectedDocuments.size})`;
+        downloadBtnText.textContent = t('button.download_count', { count: selectedDocuments.size });
     } else {
         downloadBtn.style.display = 'none';
     }
@@ -780,7 +885,7 @@ if (downloadSelectedBtn) {
                     await writable.write(blob);
                     await writable.close();
 
-                    showStatus('Document downloaded successfully', 'success');
+                    showStatus(t('status.downloaded'), 'success');
                     selectedDocuments.clear();
                     renderDocuments();
                     updateSelectionUI();
@@ -802,7 +907,7 @@ if (downloadSelectedBtn) {
                         }]
                     });
 
-                    showStatus(`Preparing ${docIds.length} documents for download...`, 'info');
+                    showStatus(t('status.preparing_download', { count: docIds.length }), 'info');
 
                     const response = await fetch('/download/multiple', {
                         method: 'POST',
@@ -817,13 +922,13 @@ if (downloadSelectedBtn) {
                     await writable.write(blob);
                     await writable.close();
 
-                    showStatus('Documents downloaded successfully', 'success');
+                    showStatus(t('status.documents_downloaded'), 'success');
                     selectedDocuments.clear();
                     renderDocuments();
                     updateSelectionUI();
                 } else {
                     // Fallback for browsers without showSaveFilePicker
-                    showStatus(`Preparing ${docIds.length} documents for download...`, 'info');
+                    showStatus(t('status.preparing_download', { count: docIds.length }), 'info');
 
                     const response = await fetch('/download/multiple', {
                         method: 'POST',
@@ -843,7 +948,7 @@ if (downloadSelectedBtn) {
                     window.URL.revokeObjectURL(url);
                     a.remove();
 
-                    showStatus('Documents downloaded successfully', 'success');
+                    showStatus(t('status.documents_downloaded'), 'success');
                     selectedDocuments.clear();
                     renderDocuments();
                     updateSelectionUI();
@@ -855,7 +960,7 @@ if (downloadSelectedBtn) {
                 return;
             }
             console.error('Download error:', error);
-            showStatus('Error downloading documents: ' + error.message, 'error');
+            showStatus(t('error.download_failed') + ': ' + error.message, 'error');
         }
     });
 }

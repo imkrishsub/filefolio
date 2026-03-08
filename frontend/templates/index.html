@@ -61,14 +61,6 @@
                 <div class="documents-header">
                     <h2 data-i18n="documents.title">Documents</h2>
                     <div class="header-controls">
-                        <button id="download-selected-btn" class="btn btn-primary" style="display: none;" data-i18n-title="button.download">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                                <polyline points="7 10 12 15 17 10"></polyline>
-                                <line x1="12" y1="15" x2="12" y2="3"></line>
-                            </svg>
-                            <span id="download-btn-text" data-i18n="button.download">Download</span>
-                        </button>
                         <button id="dark-mode-toggle" class="view-btn" data-i18n-title="view.dark_mode">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
@@ -131,6 +123,16 @@
             </section>
         </main>
     </div>
+
+    <!-- Floating Action Button -->
+    <button id="download-selected-btn" class="fab" style="display: none;" data-i18n-title="button.download">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+        </svg>
+        <span id="download-btn-text" data-i18n="button.download">Download</span>
+    </button>
 
     <!-- Edit document modal -->
     <div id="edit-modal" class="modal" style="display: none;">

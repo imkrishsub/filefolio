@@ -118,11 +118,63 @@ header p {
     border: 0;
 }
 
-.language-selector {
+/* Top Right Controls */
+.top-right-controls {
     position: fixed !important;
     top: 1.5rem !important;
     right: 2rem !important;
-    left: auto !important;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    z-index: 1000;
+}
+
+.icon-btn {
+    background: var(--bg-secondary);
+    border: 1.5px solid var(--border-color);
+    border-radius: 10px;
+    padding: 0.6rem 0.8rem;
+    box-shadow: var(--shadow-sm);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-primary);
+    height: 38px;
+    min-width: 38px;
+}
+
+.icon-btn:hover {
+    box-shadow: var(--shadow-md);
+    border-color: var(--accent-color);
+    transform: translateY(-1px);
+}
+
+.icon-btn svg {
+    color: var(--accent-color);
+    display: block;
+}
+
+/* Light mode: show moon icon (switch to dark) */
+.icon-btn .moon-icon {
+    display: block !important;
+}
+
+.icon-btn .sun-icon {
+    display: none;
+}
+
+/* Dark mode: show sun icon (switch to light) */
+body.dark-mode .icon-btn .moon-icon {
+    display: none !important;
+}
+
+body.dark-mode .icon-btn .sun-icon {
+    display: block;
+}
+
+.language-selector {
     display: flex;
     align-items: center;
     gap: 0.75rem;
@@ -131,8 +183,8 @@ header p {
     border-radius: 10px;
     padding: 0.6rem 1rem;
     box-shadow: var(--shadow-sm);
-    z-index: 1000;
     transition: all 0.2s ease;
+    height: 38px;
 }
 
 .language-selector:hover {

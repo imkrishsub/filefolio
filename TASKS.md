@@ -2,6 +2,12 @@
 
 ## Active
 
+### Documentation
+- [ ] Show Ko-fi link in README.md in a prominent manner
+  - Date added: 2026-03-07
+  - Priority: high
+  - Notes: Add Ko-fi donation/support link prominently in the README
+
 ### Core functionality (MVP)
 - [ ] Create organized folder structure for stored PDFs
   - Date added: 2025-10-27
@@ -9,10 +15,16 @@
   - Notes: Group by category/year instead of flat uploads folder
 
 ### Enhancements
-- [ ] Add document preview in browser
-  - Date added: 2025-10-27
+
+- [ ] Support syncing from/to a folder
+  - Date added: 2026-03-07
   - Priority: medium
-  - Notes: Use PDF.js for in-browser preview without download
+  - Notes: Watch a source folder for new files, automatically tag, rename, and organize into target location. Optional feature - web interface drag & drop/upload always available
+
+- [ ] Add language support
+  - Date added: 2026-03-07
+  - Priority: medium
+  - Notes: Translate UI elements, e.g., tags
 
 - [ ] Add custom tagging rules/templates
   - Date added: 2025-10-27
@@ -29,6 +41,11 @@
   - Priority: low
   - Notes: Show document counts by category, upload trends, storage usage
 
+- [ ] Support CLI usage for typical tasks
+  - Date added: 2026-03-07
+  - Priority: low
+  - Notes: Command-line interface for common operations (upload, search, tag, etc.)
+
 ### Polish & Production
 - [ ] Add error handling and validation improvements
   - Date added: 2025-10-27
@@ -40,10 +57,11 @@
   - Priority: low
   - Notes: Improve UX during file processing
 
-- [ ] Create automated tests
+- [x] Create automated tests
   - Date added: 2025-10-27
+  - Date completed: 2026-03-07
   - Priority: medium
-  - Notes: Unit tests for backend, integration tests for upload flow
+  - Notes: Comprehensive test suite with unit tests, integration tests, PDF processing tests, search tests, and frontend tests. Includes pytest configuration and GitHub Actions CI/CD setup
 
 - [ ] Add backup/restore functionality
   - Date added: 2025-10-27
@@ -105,6 +123,11 @@
   - Date added: 2025-10-27
   - Date completed: 2025-10-27
   - Notes: Allow users to create and manage custom tags for document organization
+
+- [x] Add document preview in browser
+  - Date added: 2025-10-27
+  - Date completed: 2025-10-27
+  - Notes: Implemented using iframe with browser's native PDF viewer
 
 - [x] Implement bulk upload and processing
   - Date added: 2025-10-27

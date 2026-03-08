@@ -66,6 +66,16 @@ Set a custom port using the `PORT` environment variable:
 PORT=8080 python backend/main.py
 ```
 
+## Testing
+
+```bash
+pytest tests/test_api.py tests/test_basic.py tests/test_pdf_processing.py
+```
+
+**39 tests passing** - Full API and functionality coverage.
+
+For detailed testing documentation, see [tests/README.md](tests/README.md).
+
 ## Project structure
 
 ```

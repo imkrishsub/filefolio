@@ -59,6 +59,7 @@ def get_db_connection():
     """Create a database connection with proper timeout and settings."""
     conn = sqlite3.connect(DB_PATH, timeout=30.0)
     conn.execute("PRAGMA busy_timeout = 30000")  # 30 seconds
+    conn.row_factory = sqlite3.Row  # Enable column access by name
     return conn
 
 
@@ -687,16 +688,25 @@ async def list_documents(
 
     documents = []
     for row in rows:
+        # Handle tags JSON parsing with empty string check
+        tags = []
+        tags_field = row['tags'] if 'tags' in row.keys() else None
+        if tags_field and tags_field.strip():
+            try:
+                tags = json.loads(tags_field)
+            except (json.JSONDecodeError, ValueError):
+                tags = []
+
         documents.append({
-            "id": row[0],
-            "original_filename": row[1],
-            "stored_filename": row[2],
-            "auto_filename": row[3],
-            "tags": json.loads(row[5]) if row[5] else [],
-            "category": row[6],
-            "upload_date": row[7],
-            "preview": row[8][:200] if row[8] else "",
-            "thumbnail": row[9] if len(row) > 9 else None
+            "id": row['id'],
+            "original_filename": row['original_filename'],
+            "stored_filename": row['stored_filename'],
+            "auto_filename": row['auto_filename'],
+            "tags": tags,
+            "category": row['category'],
+            "upload_date": row['upload_date'],
+            "preview": row['content_preview'][:200] if row['content_preview'] else "",
+            "thumbnail": row['thumbnail_path']
         })
 
     return documents

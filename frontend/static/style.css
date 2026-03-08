@@ -94,6 +94,22 @@ header p {
     font-size: 1.1rem;
 }
 
+.kofi-link {
+    display: inline-block;
+    margin-top: 1rem;
+    opacity: 0.9;
+    transition: opacity 0.2s ease;
+}
+
+.kofi-link:hover {
+    opacity: 1;
+}
+
+.kofi-link img {
+    height: 36px;
+    border: 0;
+}
+
 .language-selector {
     position: fixed !important;
     top: 1.5rem !important;

@@ -14,29 +14,27 @@ Key design decisions:
 - Ollama integration: Uses local LLMs (llama3.2-vision) for document analysis
 """
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
-from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
-from pathlib import Path
-import shutil
-from datetime import datetime
-import pypdf
-import sqlite3
+import hashlib
+import io
 import json
-import ollama
+import os
 import re
+import sqlite3
+import zipfile
+from datetime import datetime
+from pathlib import Path
+from typing import List
+
+import ollama
+import pypdf
+import pytesseract
+import uvicorn
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pdf2image import convert_from_path
 from PIL import Image
-import io
-import base64
-import pytesseract
-import hashlib
-import zipfile
-from typing import List
 from pydantic import BaseModel
-import os
 
 app = FastAPI()
 
@@ -200,7 +198,9 @@ def reindex_documents_content():
     cursor.execute("DROP TRIGGER IF EXISTS documents_ad")
 
     # Get all documents
-    cursor.execute("SELECT id, file_path, original_filename, auto_filename, tags, category FROM documents")
+    cursor.execute(
+        "SELECT id, file_path, original_filename, auto_filename, tags, category FROM documents"
+    )
     documents = cursor.fetchall()
 
     print(f"Re-indexing {len(documents)} documents...")
@@ -229,29 +229,37 @@ def reindex_documents_content():
                     images = convert_from_path(file_path, dpi=300)
                     ocr_text = ""
                     for image in images[:20]:
-                        page_text = pytesseract.image_to_string(image, lang='eng+deu')
+                        page_text = pytesseract.image_to_string(image, lang="eng+deu")
                         ocr_text += page_text + " "
 
                     if len(ocr_text.strip()) > len(full_text.strip()):
                         full_text = ocr_text
-                        print(f"  OCR successful: {len(full_text)} characters extracted")
+                        print(
+                            f"  OCR successful: {len(full_text)} characters extracted"
+                        )
                 except Exception as ocr_error:
                     print(f"  OCR failed: {ocr_error}")
 
             text_preview = full_text[:2000]
 
             # Update documents table
-            cursor.execute("""
+            cursor.execute(
+                """
                 UPDATE documents
                 SET content_preview = ?
                 WHERE id = ?
-            """, (text_preview, doc_id))
+            """,
+                (text_preview, doc_id),
+            )
 
             # Insert into FTS index
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO documents_fts(rowid, original_filename, auto_filename, tags, category, content)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, (doc_id, orig_name, auto_name, tags, category, text_preview))
+            """,
+                (doc_id, orig_name, auto_name, tags, category, text_preview),
+            )
 
             updated += 1
 
@@ -316,7 +324,7 @@ async def upload_pdf(file: UploadFile = File(...)):
 
     Returns: Document metadata including suggested tags and category
     """
-    if not file.filename.endswith('.pdf'):
+    if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 
     # Save file temporarily
@@ -336,7 +344,10 @@ async def upload_pdf(file: UploadFile = File(...)):
     # Check for duplicates
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, original_filename, upload_date FROM documents WHERE file_hash = ?", (file_hash,))
+    cursor.execute(
+        "SELECT id, original_filename, upload_date FROM documents WHERE file_hash = ?",
+        (file_hash,),
+    )
     duplicate = cursor.fetchone()
     conn.close()
 
@@ -345,7 +356,7 @@ async def upload_pdf(file: UploadFile = File(...)):
         file_path.unlink()
         raise HTTPException(
             status_code=409,
-            detail=f"Duplicate file detected. This file was already uploaded as '{duplicate[1]}' on {duplicate[2][:10]}"
+            detail=f"Duplicate file detected. This file was already uploaded as '{duplicate[1]}' on {duplicate[2][:10]}",
         )
 
     # Extract text from PDF for search indexing
@@ -358,19 +369,21 @@ async def upload_pdf(file: UploadFile = File(...)):
 
         # If text extraction yielded little or no text, try OCR
         if len(full_text.strip()) < 50:
-            print(f"PDF appears to be scanned or has minimal text, attempting OCR...")
+            print("PDF appears to be scanned or has minimal text, attempting OCR...")
             try:
                 # Convert PDF pages to images and run OCR
                 images = convert_from_path(file_path, dpi=300)
                 ocr_text = ""
                 for i, image in enumerate(images[:20]):  # Limit to 20 pages
-                    page_text = pytesseract.image_to_string(image, lang='eng+deu')
+                    page_text = pytesseract.image_to_string(image, lang="eng+deu")
                     ocr_text += page_text + " "
                     print(f"OCR extracted {len(page_text)} chars from page {i+1}")
 
                 if len(ocr_text.strip()) > len(full_text.strip()):
                     full_text = ocr_text
-                    print(f"OCR successful: extracted {len(full_text)} total characters")
+                    print(
+                        f"OCR successful: extracted {len(full_text)} total characters"
+                    )
             except Exception as ocr_error:
                 print(f"OCR failed: {ocr_error}")
 
@@ -388,22 +401,26 @@ async def upload_pdf(file: UploadFile = File(...)):
     # Save to database
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("""
+    cursor.execute(
+        """
         INSERT INTO documents
-        (original_filename, stored_filename, auto_filename, file_path, file_hash, tags, category, upload_date, content_preview, thumbnail_path)
+        (original_filename, stored_filename, auto_filename, file_path, file_hash,
+         tags, category, upload_date, content_preview, thumbnail_path)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        file.filename,
-        stored_filename,
-        None,  # No auto-renaming
-        str(file_path),
-        file_hash,
-        json.dumps(tags),
-        category,
-        datetime.now().isoformat(),
-        text_preview,
-        thumbnail_path
-    ))
+    """,
+        (
+            file.filename,
+            stored_filename,
+            None,  # No auto-renaming
+            str(file_path),
+            file_hash,
+            json.dumps(tags),
+            category,
+            datetime.now().isoformat(),
+            text_preview,
+            thumbnail_path,
+        ),
+    )
     doc_id = cursor.lastrowid
     conn.commit()
     conn.close()
@@ -414,7 +431,7 @@ async def upload_pdf(file: UploadFile = File(...)):
         "auto_filename": None,
         "tags": tags,
         "category": category,
-        "preview": text_preview[:200]
+        "preview": text_preview[:200],
     }
 
 
@@ -438,9 +455,9 @@ def generate_thumbnail(pdf_path: Path, stored_filename: str):
             img.thumbnail((300, 400), Image.Resampling.LANCZOS)
 
             # Save as JPEG
-            thumbnail_filename = stored_filename.replace('.pdf', '.jpg')
+            thumbnail_filename = stored_filename.replace(".pdf", ".jpg")
             thumbnail_path = THUMBNAILS_DIR / thumbnail_filename
-            img.save(thumbnail_path, 'JPEG', quality=85)
+            img.save(thumbnail_path, "JPEG", quality=85)
 
             return f"/thumbnails/{thumbnail_filename}"
     except Exception as e:
@@ -462,7 +479,7 @@ def get_existing_tags():
         try:
             tags = json.loads(row[0])
             all_tags.update(tags)
-        except:
+        except (json.JSONDecodeError, TypeError, ValueError):
             pass
 
     return list(all_tags)
@@ -546,25 +563,24 @@ Respond in JSON format:
 }}"""
 
         response = ollama.chat(
-            model='llama3.2',
-            messages=[{'role': 'user', 'content': prompt}]
+            model="llama3.2", messages=[{"role": "user", "content": prompt}]
         )
 
         # Parse response
-        response_text = response['message']['content']
+        response_text = response["message"]["content"]
 
         # Extract JSON from response (handle markdown code blocks)
-        json_match = re.search(r'\{[\s\S]*\}', response_text)
+        json_match = re.search(r"\{[\s\S]*\}", response_text)
         if json_match:
             result = json.loads(json_match.group())
-            category = result.get('category', 'Other')
-            tags = result.get('tags', [])
+            category = result.get("category", "Other")
+            tags = result.get("tags", [])
 
             # Filter out non-English tags (basic check for common German/non-English chars)
             filtered_tags = []
             for tag in tags:
                 # Remove tags with umlauts or other non-English characters
-                if not re.search(r'[äöüßÄÖÜ]', tag):
+                if not re.search(r"[äöüßÄÖÜ]", tag):
                     filtered_tags.append(tag.lower())
 
             # If all tags were filtered out or empty, ensure we have at least one tag
@@ -591,7 +607,7 @@ async def list_documents(
     category: str = None,
     tags: str = None,
     date_from: str = None,
-    date_to: str = None
+    date_to: str = None,
 ):
     """
     Retrieve and search documents.
@@ -619,7 +635,7 @@ async def list_documents(
 
         # Add wildcard suffix for prefix matching (fuzzy search)
         # This allows "payro" to match "payroll"
-        fts_query = fts_query + '*'
+        fts_query = fts_query + "*"
 
         # Build the query using FTS5
         query = """
@@ -690,24 +706,28 @@ async def list_documents(
     for row in rows:
         # Handle tags JSON parsing with empty string check
         tags = []
-        tags_field = row['tags'] if 'tags' in row.keys() else None
+        tags_field = row["tags"] if "tags" in row.keys() else None
         if tags_field and tags_field.strip():
             try:
                 tags = json.loads(tags_field)
             except (json.JSONDecodeError, ValueError):
                 tags = []
 
-        documents.append({
-            "id": row['id'],
-            "original_filename": row['original_filename'],
-            "stored_filename": row['stored_filename'],
-            "auto_filename": row['auto_filename'],
-            "tags": tags,
-            "category": row['category'],
-            "upload_date": row['upload_date'],
-            "preview": row['content_preview'][:200] if row['content_preview'] else "",
-            "thumbnail": row['thumbnail_path']
-        })
+        documents.append(
+            {
+                "id": row["id"],
+                "original_filename": row["original_filename"],
+                "stored_filename": row["stored_filename"],
+                "auto_filename": row["auto_filename"],
+                "tags": tags,
+                "category": row["category"],
+                "upload_date": row["upload_date"],
+                "preview": (
+                    row["content_preview"][:200] if row["content_preview"] else ""
+                ),
+                "thumbnail": row["thumbnail_path"],
+            }
+        )
 
     return documents
 
@@ -719,7 +739,9 @@ async def get_filters():
     cursor = conn.cursor()
 
     # Get unique categories
-    cursor.execute("SELECT DISTINCT category FROM documents WHERE category IS NOT NULL ORDER BY category")
+    cursor.execute(
+        "SELECT DISTINCT category FROM documents WHERE category IS NOT NULL ORDER BY category"
+    )
     categories = [row[0] for row in cursor.fetchall()]
 
     # Get all unique tags
@@ -732,13 +754,10 @@ async def get_filters():
         try:
             tags = json.loads(row[0])
             all_tags.update(tags)
-        except:
+        except (json.JSONDecodeError, TypeError, ValueError):
             pass
 
-    return {
-        "categories": categories,
-        "tags": sorted(list(all_tags))
-    }
+    return {"categories": categories, "tags": sorted(list(all_tags))}
 
 
 @app.get("/document/{doc_id}")
@@ -769,7 +788,9 @@ async def download_single_document(doc_id: int):
     """Download a single document with Content-Disposition header."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT file_path, original_filename FROM documents WHERE id = ?", (doc_id,))
+    cursor.execute(
+        "SELECT file_path, original_filename FROM documents WHERE id = ?", (doc_id,)
+    )
     row = cursor.fetchone()
     conn.close()
 
@@ -785,9 +806,7 @@ async def download_single_document(doc_id: int):
         file_path,
         media_type="application/pdf",
         filename=original_filename,
-        headers={
-            "Content-Disposition": f"attachment; filename={original_filename}"
-        }
+        headers={"Content-Disposition": f"attachment; filename={original_filename}"},
     )
 
 
@@ -852,7 +871,9 @@ async def delete_document(doc_id: int):
     cursor = conn.cursor()
 
     # Get document details
-    cursor.execute("SELECT file_path, thumbnail_path FROM documents WHERE id = ?", (doc_id,))
+    cursor.execute(
+        "SELECT file_path, thumbnail_path FROM documents WHERE id = ?", (doc_id,)
+    )
     row = cursor.fetchone()
 
     if not row:
@@ -896,7 +917,7 @@ async def download_multiple_documents(request: DownloadRequest):
     cursor = conn.cursor()
 
     # Get document details
-    placeholders = ','.join('?' * len(request.document_ids))
+    placeholders = ",".join("?" * len(request.document_ids))
     query = f"SELECT id, file_path, original_filename, stored_filename FROM documents WHERE id IN ({placeholders})"
     cursor.execute(query, request.document_ids)
     rows = cursor.fetchall()
@@ -907,7 +928,7 @@ async def download_multiple_documents(request: DownloadRequest):
 
     # Create ZIP file in memory
     zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
         for doc_id, file_path, original_filename, stored_filename in rows:
             if Path(file_path).exists():
                 # Use original filename in the ZIP
@@ -921,7 +942,7 @@ async def download_multiple_documents(request: DownloadRequest):
         media_type="application/zip",
         headers={
             "Content-Disposition": f"attachment; filename=documents_{datetime.now().strftime('%Y%m%d')}.zip"
-        }
+        },
     )
 
 

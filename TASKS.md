@@ -22,10 +22,11 @@
   - Priority: medium
   - Notes: Watch a source folder for new files, automatically tag, rename, and organize into target location. Optional feature - web interface drag & drop/upload always available
 
-- [ ] Add language support
+- [x] Add language support
   - Date added: 2026-03-07
+  - Date completed: 2026-03-08
   - Priority: medium
-  - Notes: Translate UI elements, e.g., tags
+  - Notes: Implemented i18n with 5 languages (English, Spanish, French, German, Chinese), language selector with auto-detection, and full UI translation coverage
 
 - [ ] Add custom tagging rules/templates
   - Date added: 2025-10-27

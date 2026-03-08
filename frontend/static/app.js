@@ -8,6 +8,7 @@ const documentsTable = document.getElementById('documents-table');
 // Search elements
 const searchInput = document.getElementById('search-input');
 const clearSearchBtn = document.getElementById('clear-search');
+const searchLoadingIndicator = document.getElementById('search-loading');
 
 // View toggle elements
 const gridViewBtn = document.getElementById('grid-view-btn');
@@ -130,6 +131,9 @@ darkModeToggle.addEventListener('click', () => {
 
 // Initialize
 async function init() {
+    // Add page loading class
+    document.body.classList.add('page-loading');
+
     await loadTranslations();
     initLanguage();
     initDarkMode();
@@ -142,8 +146,12 @@ async function init() {
         });
     }
 
-    loadDocuments();
+    await loadDocuments(true);
     loadAllTags();
+
+    // Page loaded - trigger fade in animation
+    document.body.classList.remove('page-loading');
+    document.body.classList.add('page-loaded');
 }
 
 init();
@@ -400,8 +408,19 @@ async function loadAllTags() {
 }
 
 // Load and display documents
-async function loadDocuments() {
+async function loadDocuments(showSkeletons = false) {
     try {
+        // Show skeleton loaders if this is initial load
+        if (showSkeletons) {
+            renderSkeletonLoaders();
+        }
+
+        // Show search loading indicator if searching
+        const isSearching = searchInput && searchInput.value;
+        if (isSearching && searchLoadingIndicator) {
+            searchLoadingIndicator.classList.add('active');
+        }
+
         // Build query parameters
         const params = new URLSearchParams();
 
@@ -416,6 +435,44 @@ async function loadDocuments() {
         renderDocuments();
     } catch (error) {
         console.error('Error loading documents:', error);
+    } finally {
+        // Hide search loading indicator
+        if (searchLoadingIndicator) {
+            searchLoadingIndicator.classList.remove('active');
+        }
+    }
+}
+
+function renderSkeletonLoaders() {
+    const skeletonCount = 6;
+
+    if (currentView === 'grid') {
+        documentsList.style.display = 'grid';
+        documentsTable.style.display = 'none';
+
+        const skeletons = Array(skeletonCount).fill(0).map(() => `
+            <div class="skeleton-card">
+                <div class="skeleton skeleton-thumbnail"></div>
+                <div class="skeleton skeleton-text"></div>
+                <div class="skeleton skeleton-text short"></div>
+            </div>
+        `).join('');
+
+        documentsList.innerHTML = skeletons;
+    } else {
+        documentsList.style.display = 'none';
+        documentsTable.style.display = 'table';
+
+        const tbody = documentsTable.querySelector('tbody');
+        const skeletons = Array(skeletonCount).fill(0).map(() => `
+            <tr>
+                <td colspan="6">
+                    <div class="skeleton skeleton-row"></div>
+                </td>
+            </tr>
+        `).join('');
+
+        tbody.innerHTML = skeletons;
     }
 }
 
@@ -465,7 +522,7 @@ function createDocumentCard(doc) {
             <div class="document-checkbox">
                 <input type="checkbox" class="doc-checkbox" data-doc-id="${doc.id}" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation(); toggleDocumentSelection(${doc.id})">
             </div>
-            <img src="${thumbnailUrl}" alt="${doc.auto_filename || doc.original_filename}" class="document-thumbnail" onclick="previewDocument(${doc.id}, '${(doc.auto_filename || doc.original_filename).replace(/'/g, "\\'")}')" style="cursor: pointer;" onerror="this.src='/static/placeholder.png'">
+            <img src="${thumbnailUrl}" alt="${doc.auto_filename || doc.original_filename}" class="document-thumbnail loading" onclick="previewDocument(${doc.id}, '${(doc.auto_filename || doc.original_filename).replace(/'/g, "\\'")}')" style="cursor: pointer;" onerror="this.src='/static/placeholder.png'; this.classList.remove('loading'); this.classList.add('loaded');" onload="this.classList.remove('loading'); this.classList.add('loaded');">
             <div class="document-content" onclick="previewDocument(${doc.id}, '${(doc.auto_filename || doc.original_filename).replace(/'/g, "\\'")}')" style="cursor: pointer;">
                 <div class="document-header">
                     <div class="document-title">
@@ -713,6 +770,14 @@ function closeEditModal() {
 async function saveDocumentChanges() {
     const docId = document.getElementById('edit-doc-id').value;
     const category = document.getElementById('edit-category').value;
+    const form = document.getElementById('edit-form');
+    const submitBtn = form.querySelector('button[type="submit"]');
+
+    // Add loading state to submit button
+    if (submitBtn) {
+        submitBtn.classList.add('loading');
+        submitBtn.disabled = true;
+    }
 
     try {
         const response = await fetch(`/document/${docId}`, {
@@ -736,6 +801,11 @@ async function saveDocumentChanges() {
         loadAllTags(); // Refresh tags list
     } catch (error) {
         showStatus(t('error.update_failed') + ': ' + error.message, 'error');
+    } finally {
+        if (submitBtn) {
+            submitBtn.classList.remove('loading');
+            submitBtn.disabled = false;
+        }
     }
 }
 
@@ -743,6 +813,13 @@ async function saveDocumentChanges() {
 async function deleteDocument(id, filename) {
     if (!confirm(t('confirm.delete', { filename }))) {
         return;
+    }
+
+    // Find the delete button and add loading state
+    const deleteBtn = event?.target?.closest('.btn-delete');
+    if (deleteBtn) {
+        deleteBtn.classList.add('loading');
+        deleteBtn.disabled = true;
     }
 
     try {
@@ -761,6 +838,11 @@ async function deleteDocument(id, filename) {
     } catch (error) {
         console.error('Delete error:', error);
         showStatus(t('error.delete_failed') + ': ' + error.message, 'error');
+    } finally {
+        if (deleteBtn) {
+            deleteBtn.classList.remove('loading');
+            deleteBtn.disabled = false;
+        }
     }
 }
 
@@ -863,6 +945,10 @@ if (downloadSelectedBtn) {
 
         const docIds = Array.from(selectedDocuments);
 
+        // Add loading state
+        downloadSelectedBtn.classList.add('loading');
+        downloadSelectedBtn.disabled = true;
+
         try {
             if (docIds.length === 1) {
                 // Single file - download as PDF directly
@@ -961,6 +1047,10 @@ if (downloadSelectedBtn) {
             }
             console.error('Download error:', error);
             showStatus(t('error.download_failed') + ': ' + error.message, 'error');
+        } finally {
+            // Remove loading state
+            downloadSelectedBtn.classList.remove('loading');
+            downloadSelectedBtn.disabled = false;
         }
     });
 }

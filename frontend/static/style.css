@@ -72,6 +72,14 @@ body {
     transition: background 0.3s ease, color 0.3s ease;
 }
 
+body.page-loading {
+    opacity: 0;
+}
+
+body.page-loaded {
+    animation: fadeIn 0.5s ease forwards;
+}
+
 .container {
     max-width: 1200px;
     margin: 0 auto;
@@ -249,6 +257,44 @@ header p {
     }
 }
 
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes shimmer {
+    0% {
+        background-position: -1000px 0;
+    }
+    100% {
+        background-position: 1000px 0;
+    }
+}
+
 /* Upload Progress */
 .upload-progress {
     background: var(--bg-secondary);
@@ -386,6 +432,76 @@ header p {
     color: var(--text-primary);
 }
 
+/* Loading Spinner */
+.spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border-color);
+    border-top-color: var(--accent-color);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+}
+
+.spinner-large {
+    width: 32px;
+    height: 32px;
+    border-width: 3px;
+}
+
+.search-loading {
+    position: absolute;
+    right: 4rem;
+    top: 50%;
+    transform: translateY(-50%);
+    display: none;
+}
+
+.search-loading.active {
+    display: block;
+}
+
+/* Skeleton Loaders */
+.skeleton {
+    background: linear-gradient(
+        90deg,
+        var(--border-color) 0%,
+        var(--bg-secondary) 50%,
+        var(--border-color) 100%
+    );
+    background-size: 1000px 100%;
+    animation: shimmer 2s infinite linear;
+    border-radius: 8px;
+}
+
+.skeleton-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 1rem;
+    opacity: 0.7;
+}
+
+.skeleton-thumbnail {
+    width: 100%;
+    aspect-ratio: 1;
+    margin-bottom: 1rem;
+}
+
+.skeleton-text {
+    height: 16px;
+    margin-bottom: 0.5rem;
+}
+
+.skeleton-text.short {
+    width: 60%;
+}
+
+.skeleton-row {
+    height: 60px;
+    margin-bottom: 0.5rem;
+}
+
 /* Documents Section */
 .documents-section {
     background: var(--bg-secondary);
@@ -478,7 +594,17 @@ header p {
     transition: all 0.2s ease;
     display: flex;
     flex-direction: column;
+    opacity: 0;
+    animation: fadeInUp 0.4s ease forwards;
 }
+
+.document-card:nth-child(1) { animation-delay: 0.05s; }
+.document-card:nth-child(2) { animation-delay: 0.1s; }
+.document-card:nth-child(3) { animation-delay: 0.15s; }
+.document-card:nth-child(4) { animation-delay: 0.2s; }
+.document-card:nth-child(5) { animation-delay: 0.25s; }
+.document-card:nth-child(6) { animation-delay: 0.3s; }
+.document-card:nth-child(n+7) { animation-delay: 0.35s; }
 
 .document-card:hover {
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
@@ -491,6 +617,23 @@ header p {
     object-fit: cover;
     background: var(--bg-tertiary);
     border-bottom: 1px solid var(--border-color);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.document-thumbnail.loaded {
+    opacity: 1;
+}
+
+.document-thumbnail.loading {
+    background: linear-gradient(
+        90deg,
+        var(--border-color) 0%,
+        var(--bg-secondary) 50%,
+        var(--border-color) 100%
+    );
+    background-size: 1000px 100%;
+    animation: shimmer 2s infinite linear;
 }
 
 .document-content {
@@ -651,7 +794,16 @@ header p {
 .documents-table tbody tr {
     border-bottom: 1px solid var(--border-color);
     transition: background 0.2s ease;
+    opacity: 0;
+    animation: fadeIn 0.3s ease forwards;
 }
+
+.documents-table tbody tr:nth-child(1) { animation-delay: 0.05s; }
+.documents-table tbody tr:nth-child(2) { animation-delay: 0.1s; }
+.documents-table tbody tr:nth-child(3) { animation-delay: 0.15s; }
+.documents-table tbody tr:nth-child(4) { animation-delay: 0.2s; }
+.documents-table tbody tr:nth-child(5) { animation-delay: 0.25s; }
+.documents-table tbody tr:nth-child(n+6) { animation-delay: 0.3s; }
 
 .documents-table tbody tr:hover {
     background: var(--bg-tertiary);
@@ -982,6 +1134,28 @@ header p {
 
 .btn-secondary:hover {
     background: var(--border-color-light);
+}
+
+.btn.loading {
+    opacity: 0.7;
+    cursor: not-allowed;
+    pointer-events: none;
+    position: relative;
+}
+
+.btn.loading::after {
+    content: '';
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    top: 50%;
+    left: 50%;
+    margin-left: -8px;
+    margin-top: -8px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
 }
 
 /* Responsive adjustments */

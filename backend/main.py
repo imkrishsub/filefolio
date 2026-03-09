@@ -581,7 +581,9 @@ CRITICAL REQUIREMENT - TAGS MUST BE IN ENGLISH AND PROPERLY FORMATTED:
 - Do NOT use years as tags (e.g., avoid "2024", "2023", etc.)
 - Do NOT use very short tags (minimum 3 characters)
 - Use spaces, NOT underscores (e.g., "birth certificate" not "birth_certificate")
-- Keep tags lowercase and simple (e.g., "invoice", "payroll", "salary", "tax")
+- Keep tags lowercase and simple (e.g., "payroll", "salary", "dental care", "reimbursement")
+- DO NOT use generic category names as tags (e.g., do NOT use "invoice", "receipt", "contract", "letter", "report", "form", "statement", "tax", "insurance" as tags)
+- Tags should be SPECIFIC descriptors (e.g., "dental care", "teeth cleaning", "reimbursement" instead of just "invoice")
 - Existing tags in the system: {existing_tags_str}
 - STRONGLY PREFER to reuse existing tags when they are relevant
 - Only create new English tags if existing tags don't apply
@@ -589,7 +591,7 @@ CRITICAL REQUIREMENT - TAGS MUST BE IN ENGLISH AND PROPERLY FORMATTED:
 Provide:
 1. A category - YOU MUST choose EXACTLY ONE from this list (use the exact spelling):
    Invoice, Receipt, Contract, Letter, Report, Form, Statement, Legal, Medical, Tax, Insurance, Other
-2. Relevant tags (3-5 English keywords that describe the document)
+2. Relevant tags (3-5 SPECIFIC English keywords that describe what the document is about, NOT generic category names)
 
 Document excerpt:
 {text[:1000]}
@@ -599,7 +601,7 @@ Original filename: {filename}
 Respond in JSON format:
 {{
   "category": "category name",
-  "tags": ["english_tag1", "english_tag2", "english_tag3"]
+  "tags": ["specific_tag1", "specific_tag2", "specific_tag3"]
 }}"""
 
         response = ollama.chat(
@@ -673,18 +675,18 @@ Respond in JSON format:
                 if len(tag_normalized) < 3:
                     continue
 
+                # Skip if tag is same as category (case-insensitive)
+                if tag_normalized == category.lower():
+                    continue
+
                 # Skip duplicate tags
                 if tag_normalized not in filtered_tags:
                     filtered_tags.append(tag_normalized)
 
-            # If all tags were filtered out or empty, ensure we have at least one tag
+            # If all tags were filtered out or empty, use fallback to rule-based processing
             if not filtered_tags:
-                if existing_tags:
-                    # Use some existing tags
-                    filtered_tags = existing_tags[:3]
-                else:
-                    # Use category as tag
-                    filtered_tags = [category.lower()]
+                print(f"AI generated no valid tags for {filename}, falling back to rule-based")
+                return fallback_processing()
 
             return filtered_tags, category
         else:

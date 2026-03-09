@@ -545,24 +545,44 @@ def process_document(text: str, filename: str):
     # Fallback to rule-based if Ollama fails
     def fallback_processing():
         text_lower = text.lower()
-        if "invoice" in text_lower or "bill" in text_lower:
+        filename_lower = filename.lower()
+
+        # Determine category
+        if "invoice" in text_lower or "bill" in text_lower or "rechnung" in text_lower:
             category = "Invoice"
-            tags = ["invoice"]
-        elif "contract" in text_lower or "agreement" in text_lower:
+        elif "contract" in text_lower or "agreement" in text_lower or "vertrag" in text_lower:
             category = "Contract"
-            tags = ["contract"]
-        elif "receipt" in text_lower:
+        elif "receipt" in text_lower or "quittung" in text_lower:
             category = "Receipt"
-            tags = ["receipt"]
         else:
             category = "Other"
-            tags = ["document"]
 
-        # Add year tags
-        if "2024" in text:
-            tags.append("2024")
-        if "2025" in text:
-            tags.append("2025")
+        # Extract meaningful tags from filename and text
+        tags = []
+
+        # Common document types in filename
+        if "payroll" in filename_lower or "gehalt" in filename_lower or "lohn" in filename_lower:
+            tags.extend(["payroll", "salary"])
+        if "birth" in filename_lower or "geburt" in filename_lower:
+            tags.extend(["birth certificate"])
+        if "passport" in filename_lower or "reisepass" in filename_lower:
+            tags.append("passport")
+        if "visa" in filename_lower:
+            tags.append("visa")
+        if "dental" in text_lower or "zahn" in text_lower:
+            tags.append("dental care")
+        if "medical" in text_lower or "arzt" in text_lower:
+            tags.append("medical")
+        if "insurance" in text_lower or "versicherung" in text_lower:
+            tags.append("insurance policy")
+        if "rent" in text_lower or "miete" in text_lower:
+            tags.append("rental")
+        if "employment" in text_lower or "arbeit" in text_lower:
+            tags.append("employment")
+
+        # If no specific tags found, use generic but not useless ones
+        if not tags:
+            tags = ["unclassified"]
 
         # Add urgent if detected
         if "urgent" in text_lower:
@@ -582,8 +602,8 @@ CRITICAL REQUIREMENT - TAGS MUST BE IN ENGLISH AND PROPERLY FORMATTED:
 - Do NOT use very short tags (minimum 3 characters)
 - Use spaces, NOT underscores (e.g., "birth certificate" not "birth_certificate")
 - Keep tags lowercase and simple (e.g., "payroll", "salary", "dental care", "reimbursement")
-- DO NOT use generic category names as tags (e.g., do NOT use "invoice", "receipt", "contract", "letter", "report", "form", "statement", "tax", "insurance" as tags)
-- Tags should be SPECIFIC descriptors (e.g., "dental care", "teeth cleaning", "reimbursement" instead of just "invoice")
+- DO NOT use generic category names as tags (e.g., do NOT use "invoice", "receipt", "contract", "letter", "report", "form", "statement", "tax", "insurance", "document" as tags)
+- Tags should be SPECIFIC descriptors (e.g., "dental care", "teeth cleaning", "reimbursement" instead of just "invoice" or "document")
 - Existing tags in the system: {existing_tags_str}
 - STRONGLY PREFER to reuse existing tags when they are relevant
 - Only create new English tags if existing tags don't apply
@@ -677,6 +697,10 @@ Respond in JSON format:
 
                 # Skip if tag is same as category (case-insensitive)
                 if tag_normalized == category.lower():
+                    continue
+
+                # Skip generic useless tags
+                if tag_normalized in ["document", "file", "pdf"]:
                     continue
 
                 # Skip duplicate tags

@@ -15,10 +15,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 from backend.main import process_document, get_db_connection, DB_PATH
 import pypdf
 
-# Category names that shouldn't be used as tags
+# Category names and generic terms that shouldn't be used as tags
 CATEGORY_NAMES = {
     "invoice", "receipt", "contract", "letter", "report",
-    "form", "statement", "legal", "medical", "tax", "insurance", "other"
+    "form", "statement", "legal", "medical", "tax", "insurance", "other",
+    "document", "file", "pdf"
 }
 
 def has_category_tag(tags_json):

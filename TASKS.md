@@ -37,7 +37,7 @@
 - [ ] Export functionality (CSV, JSON)
   - Date added: 2025-10-27
   - Priority: low
-  - Notes: Export document metadata and organization
+  - Notes: Export document metadata and organization (will be included as part of backup/restore feature)
 
 - [ ] Add statistics dashboard
   - Date added: 2025-10-27
@@ -72,10 +72,11 @@
   - Priority: medium
   - Notes: Comprehensive test suite with unit tests, integration tests, PDF processing tests, search tests, and frontend tests. Includes pytest configuration and GitHub Actions CI/CD setup
 
-- [ ] Add backup/restore functionality
+- [x] Add backup/restore functionality
   - Date added: 2025-10-27
-  - Priority: low
-  - Notes: Export entire database and files for backup
+  - Date completed: 2026-03-09
+  - Priority: medium
+  - Notes: Complete system backup including database, PDFs, and thumbnails as compressed archive. Supports restore to new location or disaster recovery. Features: full backup/restore via ZIP archive, UI integration in settings modal, comprehensive i18n support for all languages, automatic cleanup of temporary files, safety backup before restore
 
 ## Blocked
 

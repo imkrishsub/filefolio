@@ -1618,3 +1618,41 @@ body.dark-mode .icon-btn .sun-icon {
     --error-bg: rgba(220, 53, 69, 0.2);
     --error-color: #f77c8a;
 }
+
+/* Backup and Restore Styles */
+.backup-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.restore-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.help-text.warning {
+    color: var(--error-color);
+    font-weight: 500;
+    margin: 0;
+}
+
+.btn-secondary {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    padding: 0.75rem 1.5rem;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+}
+
+.btn-secondary:hover {
+    background: var(--hover-bg);
+    border-color: var(--primary-color);
+}

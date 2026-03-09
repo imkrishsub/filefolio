@@ -1271,3 +1271,104 @@ if (settingsModal) {
         }
     });
 }
+
+// Backup and Restore Functions
+async function createBackup() {
+    const btn = document.getElementById('create-backup-btn');
+    if (!btn) return;
+
+    try {
+        btn.disabled = true;
+        btn.classList.add('loading');
+        btn.textContent = t('settings.creating_backup') || 'Creating backup...';
+
+        const response = await fetch('/backup');
+
+        if (!response.ok) {
+            throw new Error(t('error.backup_failed'));
+        }
+
+        // Download the backup file
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+
+        // Extract filename from Content-Disposition header
+        const contentDisposition = response.headers.get('Content-Disposition');
+        const filename = contentDisposition
+            ? contentDisposition.split('filename=')[1].replace(/"/g, '')
+            : `filefolio_backup_${new Date().toISOString().slice(0, 10)}.zip`;
+
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+
+        showSettingsStatus(t('success.backup_created'), 'success');
+    } catch (error) {
+        console.error('Backup error:', error);
+        showSettingsStatus(error.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.classList.remove('loading');
+        btn.textContent = t('settings.create_backup');
+    }
+}
+
+async function restoreBackup(file) {
+    if (!confirm(t('confirm.restore_backup') || 'This will replace all current data! Are you sure?')) {
+        return;
+    }
+
+    try {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        showSettingsStatus(t('settings.restoring') || 'Restoring backup...', 'info');
+
+        const response = await fetch('/restore', {
+            method: 'POST',
+            body: formData
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.detail || t('error.restore_failed'));
+        }
+
+        showSettingsStatus(
+            t('success.backup_restored') ||
+            `Backup restored! ${data.stats.pdfs_restored} PDFs and ${data.stats.thumbnails_restored} thumbnails restored.`,
+            'success'
+        );
+
+        // Reload documents after a short delay
+        setTimeout(() => {
+            loadDocuments();
+        }, 1500);
+
+    } catch (error) {
+        console.error('Restore error:', error);
+        showSettingsStatus(error.message, 'error');
+    }
+}
+
+// Setup backup/restore buttons
+const createBackupBtn = document.getElementById('create-backup-btn');
+if (createBackupBtn) {
+    createBackupBtn.addEventListener('click', createBackup);
+}
+
+const restoreFileInput = document.getElementById('restore-file-input');
+if (restoreFileInput) {
+    restoreFileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            restoreBackup(e.target.files[0]);
+            // Reset input so same file can be selected again
+            e.target.value = '';
+        }
+    });
+}

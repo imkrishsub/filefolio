@@ -19,7 +19,9 @@ import io
 import json
 import os
 import re
+import shutil
 import sqlite3
+import tempfile
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -1182,6 +1184,169 @@ async def scan_sync_folder(folder_id: int):
     thread.start()
 
     return {"success": True, "message": "Folder scan started"}
+
+
+# Backup and Restore Endpoints
+
+
+@app.get("/backup")
+async def create_backup():
+    """
+    Create a complete backup of the system.
+
+    This endpoint creates a compressed archive containing:
+    - Database file (documents.db)
+    - All uploaded PDFs
+    - All thumbnails
+    - System metadata
+
+    Returns a ZIP file for download.
+    """
+    try:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_filename = f"filefolio_backup_{timestamp}.zip"
+
+        # Create a temporary file for the backup
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+        temp_path = temp_file.name
+        temp_file.close()
+
+        # Create ZIP archive
+        with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            # Add database
+            if DB_PATH.exists():
+                zip_file.write(DB_PATH, "data/documents.db")
+
+            # Add all PDFs
+            if UPLOAD_DIR.exists():
+                for pdf_file in UPLOAD_DIR.glob("*.pdf"):
+                    zip_file.write(pdf_file, f"uploads/{pdf_file.name}")
+
+            # Add all thumbnails
+            if THUMBNAILS_DIR.exists():
+                for thumb_file in THUMBNAILS_DIR.glob("*.jpg"):
+                    zip_file.write(thumb_file, f"thumbnails/{thumb_file.name}")
+
+            # Add metadata file with backup info
+            metadata = {
+                "backup_date": datetime.now().isoformat(),
+                "version": "1.0",
+                "system": "FileFolio",
+            }
+            zip_file.writestr("backup_metadata.json", json.dumps(metadata, indent=2))
+
+        # Return the backup file and clean up after sending
+        def cleanup_temp_file():
+            try:
+                os.unlink(temp_path)
+            except Exception as e:
+                print(f"Error cleaning up temp file: {e}")
+
+        return FileResponse(
+            temp_path,
+            media_type="application/zip",
+            filename=backup_filename,
+            background=cleanup_temp_file,
+        )
+
+    except Exception as e:
+        print(f"Backup error: {e}")
+        raise HTTPException(status_code=500, detail=f"Backup failed: {str(e)}")
+
+
+@app.post("/restore")
+async def restore_backup(file: UploadFile = File(...)):
+    """
+    Restore from a backup file.
+
+    This endpoint restores the system from a backup ZIP file.
+    WARNING: This will replace all existing data!
+
+    Args:
+        file: ZIP backup file to restore from
+
+    Returns:
+        Success message with restoration details
+    """
+    if not file.filename.endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Only ZIP files are allowed")
+
+    try:
+        # Save uploaded backup file temporarily
+        temp_backup = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+        with temp_backup as buffer:
+            content = await file.read()
+            buffer.write(content)
+
+        temp_backup_path = temp_backup.name
+
+        # Extract and validate backup
+        with zipfile.ZipFile(temp_backup_path, "r") as zip_file:
+            # Check for required files
+            file_list = zip_file.namelist()
+
+            if "data/documents.db" not in file_list:
+                os.unlink(temp_backup_path)
+                raise HTTPException(
+                    status_code=400, detail="Invalid backup: missing database file"
+                )
+
+            # Stop sync service before restore
+            sync_service.stop()
+
+            # Create backup of current data before restore
+            backup_dir = DATA_DIR / f"pre_restore_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            backup_dir.mkdir(exist_ok=True)
+
+            # Backup current database
+            if DB_PATH.exists():
+                shutil.copy2(DB_PATH, backup_dir / "documents.db")
+
+            # Extract database
+            zip_file.extract("data/documents.db", BASE_DIR)
+
+            # Extract PDFs
+            pdf_files = [f for f in file_list if f.startswith("uploads/") and f.endswith(".pdf")]
+            for pdf_file in pdf_files:
+                zip_file.extract(pdf_file, BASE_DIR)
+
+            # Extract thumbnails
+            thumb_files = [f for f in file_list if f.startswith("thumbnails/") and f.endswith(".jpg")]
+            for thumb_file in thumb_files:
+                zip_file.extract(thumb_file, BASE_DIR)
+
+            # Read backup metadata if available
+            metadata = {}
+            if "backup_metadata.json" in file_list:
+                metadata_content = zip_file.read("backup_metadata.json")
+                metadata = json.loads(metadata_content)
+
+        # Clean up temp backup file
+        os.unlink(temp_backup_path)
+
+        # Restart sync service
+        sync_service.start()
+
+        return {
+            "success": True,
+            "message": "Backup restored successfully",
+            "metadata": metadata,
+            "stats": {
+                "pdfs_restored": len(pdf_files),
+                "thumbnails_restored": len(thumb_files),
+            },
+        }
+
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="Invalid ZIP file")
+    except Exception as e:
+        print(f"Restore error: {e}")
+        # Try to restart sync service if it was stopped
+        try:
+            sync_service.start()
+        except Exception:
+            pass
+        raise HTTPException(status_code=500, detail=f"Restore failed: {str(e)}")
 
 
 if __name__ == "__main__":

@@ -269,6 +269,30 @@
                         <button id="add-folder-btn" class="btn-primary btn-full-width" data-i18n="settings.add_folder">Add sync folder</button>
                     </div>
                 </div>
+
+                <div class="settings-section">
+                    <h3 data-i18n="settings.backup_restore">Backup & restore</h3>
+                    <p class="settings-description" data-i18n="settings.backup_description">
+                        Create complete backups including all documents, thumbnails, and metadata. Restore from previous backups.
+                    </p>
+
+                    <div class="backup-actions">
+                        <button id="create-backup-btn" class="btn-primary btn-full-width" data-i18n="settings.create_backup">
+                            Create backup
+                        </button>
+
+                        <div class="restore-section">
+                            <label for="restore-file-input" class="btn-secondary btn-full-width" data-i18n="settings.restore_backup">
+                                Restore from backup
+                            </label>
+                            <input type="file" id="restore-file-input" accept=".zip" hidden>
+                            <p class="help-text warning" data-i18n="settings.restore_warning">
+                                Warning: This will replace all current data!
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
             </div>
         </div>
     </div>

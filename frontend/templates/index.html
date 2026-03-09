@@ -8,6 +8,12 @@
 </head>
 <body>
     <div class="top-right-controls">
+        <button id="settings-btn" class="icon-btn" title="Settings">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+        </button>
         <button id="dark-mode-toggle" class="icon-btn" title="Toggle dark mode">
             <svg class="moon-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
@@ -226,6 +232,43 @@
             </div>
             <div class="modal-body modal-body-preview">
                 <iframe id="pdf-viewer" width="100%" height="100%" frameborder="0"></iframe>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings modal -->
+    <div id="settings-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 data-i18n="settings.title">Settings</h2>
+                <button class="modal-close" onclick="closeSettingsModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="settings-section">
+                    <h3 data-i18n="settings.sync_folders">Sync folders</h3>
+                    <p class="settings-description" data-i18n="settings.sync_description">
+                        Configure folders to automatically watch for new PDF files and process them.
+                    </p>
+
+                    <!-- Status messages for settings -->
+                    <div id="settings-status"></div>
+
+                    <div class="sync-folders-list" id="sync-folders-list">
+                        <!-- Sync folders will be loaded here -->
+                    </div>
+
+                    <div class="add-folder-form">
+                        <input type="text" id="new-folder-path" class="folder-path-input" placeholder="/Users/you/Documents/Scans" data-i18n-placeholder="settings.folder_path_placeholder">
+                        <p class="help-text" data-i18n="settings.path_help">
+                            Enter the full absolute path to the folder you want to monitor
+                        </p>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="move-after-processing">
+                            <span data-i18n="settings.move_after_processing">Move files to 'processed' folder after importing</span>
+                        </label>
+                        <button id="add-folder-btn" class="btn-primary btn-full-width" data-i18n="settings.add_folder">Add sync folder</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

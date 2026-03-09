@@ -882,6 +882,23 @@ function showStatus(message, type) {
     }, 5000);
 }
 
+// Show status message in settings modal
+function showSettingsStatus(message, type) {
+    const settingsStatus = document.getElementById('settings-status');
+    if (!settingsStatus) return;
+
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `status-message ${type}`;
+    messageDiv.textContent = message;
+
+    settingsStatus.appendChild(messageDiv);
+
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+        messageDiv.remove();
+    }, 5000);
+}
+
 // Toggle document selection
 function toggleDocumentSelection(docId) {
     if (selectedDocuments.has(docId)) {
@@ -1051,6 +1068,206 @@ if (downloadSelectedBtn) {
             // Remove loading state
             downloadSelectedBtn.classList.remove('loading');
             downloadSelectedBtn.disabled = false;
+        }
+    });
+}
+
+// =====================
+// Sync Folders Feature
+// =====================
+
+// Settings modal functions
+function openSettingsModal() {
+    const modal = document.getElementById('settings-modal');
+    modal.style.display = 'flex';
+    loadSyncFolders();
+}
+
+function closeSettingsModal() {
+    const modal = document.getElementById('settings-modal');
+    modal.style.display = 'none';
+}
+
+async function loadSyncFolders() {
+    try {
+        const response = await fetch('/sync-folders');
+        const folders = await response.json();
+
+        const listContainer = document.getElementById('sync-folders-list');
+
+        if (folders.length === 0) {
+            listContainer.innerHTML = `<p class="empty-state">${t('settings.no_folders')}</p>`;
+            return;
+        }
+
+        listContainer.innerHTML = folders.map(folder => `
+            <div class="sync-folder-item ${folder.enabled ? 'enabled' : 'disabled'}" data-folder-id="${folder.id}">
+                <div class="folder-info">
+                    <div class="folder-path">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                        <span>${folder.source_path}</span>
+                    </div>
+                    <div class="folder-status">
+                        <span class="status-badge ${folder.is_watching ? 'watching' : 'paused'}">
+                            ${folder.is_watching ? t('settings.watching') : t('settings.paused')}
+                        </span>
+                        ${folder.move_after_processing ? '<span class="move-badge" title="' + t('settings.move_after_processing') + '">📦</span>' : ''}
+                        ${folder.last_scan ? '<span class="last-scan">Last scan: ' + new Date(folder.last_scan).toLocaleString() + '</span>' : ''}
+                    </div>
+                </div>
+                <div class="folder-actions">
+                    <label class="toggle-switch">
+                        <input type="checkbox" ${folder.enabled ? 'checked' : ''} onchange="toggleSyncFolder(${folder.id}, this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <button class="btn-icon" onclick="scanSyncFolder(${folder.id})" title="${t('settings.scan_now')}">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="23 4 23 10 17 10"></polyline>
+                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+                        </svg>
+                    </button>
+                    <button class="btn-icon btn-danger" onclick="removeSyncFolder(${folder.id})" title="${t('settings.remove_folder')}">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        `).join('');
+    } catch (error) {
+        console.error('Error loading sync folders:', error);
+        showSettingsStatus(t('error.loading_failed'), 'error');
+    }
+}
+
+async function addSyncFolder() {
+    const pathInput = document.getElementById('new-folder-path');
+    const moveCheckbox = document.getElementById('move-after-processing');
+    const addBtn = document.getElementById('add-folder-btn');
+
+    const folderPath = pathInput.value.trim();
+
+    if (!folderPath) {
+        showSettingsStatus(t('error.folder_path_required'), 'error');
+        return;
+    }
+
+    addBtn.disabled = true;
+    addBtn.classList.add('loading');
+
+    try {
+        const response = await fetch('/sync-folders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                source_path: folderPath,
+                enabled: true,
+                move_after_processing: moveCheckbox.checked
+            })
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || t('error.add_folder_failed'));
+        }
+
+        pathInput.value = '';
+        moveCheckbox.checked = false;
+        loadSyncFolders();
+        showSettingsStatus(t('success.folder_added'), 'success');
+    } catch (error) {
+        console.error('Error adding sync folder:', error);
+        showSettingsStatus(error.message, 'error');
+    } finally {
+        addBtn.disabled = false;
+        addBtn.classList.remove('loading');
+    }
+}
+
+async function toggleSyncFolder(folderId, enabled) {
+    try {
+        const response = await fetch(`/sync-folders/${folderId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled })
+        });
+
+        if (!response.ok) {
+            throw new Error(t('error.update_failed'));
+        }
+
+        loadSyncFolders();
+        showSettingsStatus(enabled ? t('success.folder_enabled') : t('success.folder_disabled'), 'success');
+    } catch (error) {
+        console.error('Error toggling sync folder:', error);
+        showSettingsStatus(error.message, 'error');
+        loadSyncFolders(); // Reload to reset checkbox
+    }
+}
+
+async function scanSyncFolder(folderId) {
+    try {
+        const response = await fetch(`/sync-folders/${folderId}/scan`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            throw new Error(t('error.scan_failed'));
+        }
+
+        showSettingsStatus(t('success.scan_started'), 'success');
+
+        // Refresh folder list after a delay to show updated last_scan
+        setTimeout(() => loadSyncFolders(), 2000);
+    } catch (error) {
+        console.error('Error scanning folder:', error);
+        showSettingsStatus(error.message, 'error');
+    }
+}
+
+async function removeSyncFolder(folderId) {
+    if (!confirm(t('confirm.remove_folder'))) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/sync-folders/${folderId}`, {
+            method: 'DELETE'
+        });
+
+        if (!response.ok) {
+            throw new Error(t('error.remove_failed'));
+        }
+
+        loadSyncFolders();
+        showSettingsStatus(t('success.folder_removed'), 'success');
+    } catch (error) {
+        console.error('Error removing sync folder:', error);
+        showSettingsStatus(error.message, 'error');
+    }
+}
+
+// Setup settings button
+const settingsBtn = document.getElementById('settings-btn');
+if (settingsBtn) {
+    settingsBtn.addEventListener('click', openSettingsModal);
+}
+
+// Setup add folder button
+const addFolderBtn = document.getElementById('add-folder-btn');
+if (addFolderBtn) {
+    addFolderBtn.addEventListener('click', addSyncFolder);
+}
+
+// Close modal on background click
+const settingsModal = document.getElementById('settings-modal');
+if (settingsModal) {
+    settingsModal.addEventListener('click', (e) => {
+        if (e.target === settingsModal) {
+            closeSettingsModal();
         }
     });
 }

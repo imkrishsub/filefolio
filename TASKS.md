@@ -17,10 +17,11 @@
 
 ### Enhancements
 
-- [ ] Support syncing from/to a folder
+- [x] Support syncing from/to a folder
   - Date added: 2026-03-07
+  - Date completed: 2026-03-08
   - Priority: medium
-  - Notes: Watch a source folder for new files, automatically tag, rename, and organize into target location. Optional feature - web interface drag & drop/upload always available
+  - Notes: Implemented file system watching with watchdog library. Features: watch multiple source folders, auto-process PDFs using existing AI pipeline, optional file moving after processing, manual folder scanning, enable/disable per folder, settings UI with i18n support, comprehensive test coverage
 
 - [x] Add language support
   - Date added: 2026-03-07
@@ -47,6 +48,11 @@
   - Date added: 2026-03-07
   - Priority: low
   - Notes: Command-line interface for common operations (upload, search, tag, etc.)
+
+- [ ] Add visual filters for document previews
+  - Date added: 2026-03-08
+  - Priority: medium
+  - Notes: Add options to apply visual filters (brightness, contrast, grayscale, sepia) to improve readability of scanned or low-quality documents in the preview modal
 
 ### Polish & Production
 - [ ] Add error handling and validation improvements

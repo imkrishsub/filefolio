@@ -39,6 +39,14 @@ def test_db(temp_test_dir, monkeypatch):
     # Initialize database
     main.init_db()
 
+    # Reinitialize sync service with test paths
+    from backend.sync_service import SyncFolderService
+    main.sync_service = SyncFolderService(
+        db_path,
+        temp_test_dir / "uploads",
+        temp_test_dir / "thumbnails"
+    )
+
     yield db_path
 
     # Cleanup

@@ -23,7 +23,7 @@ import sqlite3
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import ollama
 import pypdf
@@ -82,6 +82,18 @@ def init_db():
         )
     """)
 
+    # Sync folders table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sync_folders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_path TEXT NOT NULL UNIQUE,
+            enabled INTEGER DEFAULT 1,
+            move_after_processing INTEGER DEFAULT 0,
+            created_date TEXT NOT NULL,
+            last_scan TEXT
+        )
+    """)
+
     # Create index on file_hash for fast duplicate detection
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_file_hash ON documents(file_hash)
@@ -125,6 +137,28 @@ def init_db():
 
 
 init_db()
+
+
+# Initialize sync service
+try:
+    from backend.sync_service import SyncFolderService
+except ModuleNotFoundError:
+    from sync_service import SyncFolderService
+
+sync_service = SyncFolderService(DB_PATH, UPLOAD_DIR, THUMBNAILS_DIR)
+
+
+# Startup and shutdown events
+@app.on_event("startup")
+async def startup_event():
+    """Start the sync folder service when the app starts."""
+    sync_service.start()
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Stop the sync folder service when the app shuts down."""
+    sync_service.stop()
 
 
 def migrate_existing_documents_to_fts():
@@ -575,9 +609,18 @@ Respond in JSON format:
 
         # Define valid categories
         VALID_CATEGORIES = [
-            "Invoice", "Receipt", "Contract", "Letter", "Report",
-            "Form", "Statement", "Legal", "Medical", "Tax",
-            "Insurance", "Other"
+            "Invoice",
+            "Receipt",
+            "Contract",
+            "Letter",
+            "Report",
+            "Form",
+            "Statement",
+            "Legal",
+            "Medical",
+            "Tax",
+            "Insurance",
+            "Other",
         ]
 
         # Extract JSON from response (handle markdown code blocks)
@@ -607,10 +650,10 @@ Respond in JSON format:
             filtered_tags = []
             for tag in tags:
                 # Normalize: lowercase, strip, replace underscores with spaces
-                tag_normalized = tag.lower().strip().replace('_', ' ')
+                tag_normalized = tag.lower().strip().replace("_", " ")
 
                 # Remove extra spaces
-                tag_normalized = re.sub(r'\s+', ' ', tag_normalized)
+                tag_normalized = re.sub(r"\s+", " ", tag_normalized)
 
                 # Skip empty tags
                 if not tag_normalized:
@@ -993,6 +1036,152 @@ async def download_multiple_documents(request: DownloadRequest):
             "Content-Disposition": f"attachment; filename=documents_{datetime.now().strftime('%Y%m%d')}.zip"
         },
     )
+
+
+# Sync Folder Endpoints
+
+
+class SyncFolderCreate(BaseModel):
+    source_path: str
+    enabled: Optional[bool] = True
+    move_after_processing: Optional[bool] = False
+
+
+class SyncFolderUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    move_after_processing: Optional[bool] = None
+
+
+@app.get("/sync-folders")
+async def list_sync_folders():
+    """Get all configured sync folders."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, source_path, enabled, move_after_processing, created_date, last_scan
+        FROM sync_folders
+        ORDER BY created_date DESC
+        """
+    )
+    rows = cursor.fetchall()
+    conn.close()
+
+    folders = []
+    for row in rows:
+        folders.append({
+            "id": row["id"],
+            "source_path": row["source_path"],
+            "enabled": bool(row["enabled"]),
+            "move_after_processing": bool(row["move_after_processing"]),
+            "created_date": row["created_date"],
+            "last_scan": row["last_scan"],
+            "is_watching": row["id"] in sync_service.observers
+        })
+
+    return folders
+
+
+@app.post("/sync-folders")
+async def create_sync_folder(folder: SyncFolderCreate):
+    """Add a new sync folder."""
+    # Validate path exists
+    path = Path(folder.source_path)
+    if not path.exists():
+        raise HTTPException(status_code=400, detail="Folder does not exist")
+
+    if not path.is_dir():
+        raise HTTPException(status_code=400, detail="Path is not a directory")
+
+    try:
+        folder_id = sync_service.add_folder(
+            folder.source_path,
+            folder.enabled,
+            folder.move_after_processing
+        )
+        return {"id": folder_id, "message": "Sync folder added successfully"}
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=400, detail="This folder is already being synced")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/sync-folders/{folder_id}")
+async def update_sync_folder(folder_id: int, updates: SyncFolderUpdate):
+    """Update sync folder settings."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    # Check if folder exists
+    cursor.execute("SELECT * FROM sync_folders WHERE id = ?", (folder_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Sync folder not found")
+
+    # Build update query
+    update_fields = []
+    params = []
+
+    if updates.enabled is not None:
+        update_fields.append("enabled = ?")
+        params.append(1 if updates.enabled else 0)
+
+        # Handle starting/stopping the watcher
+        if updates.enabled:
+            sync_service.enable_folder(folder_id)
+        else:
+            sync_service.disable_folder(folder_id)
+
+    if updates.move_after_processing is not None:
+        update_fields.append("move_after_processing = ?")
+        params.append(1 if updates.move_after_processing else 0)
+
+    if update_fields:
+        params.append(folder_id)
+        query = f"UPDATE sync_folders SET {', '.join(update_fields)} WHERE id = ?"
+        cursor.execute(query, params)
+        conn.commit()
+
+    conn.close()
+    return {"success": True, "message": "Sync folder updated successfully"}
+
+
+@app.delete("/sync-folders/{folder_id}")
+async def delete_sync_folder(folder_id: int):
+    """Remove a sync folder."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM sync_folders WHERE id = ?", (folder_id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Sync folder not found")
+
+    sync_service.remove_folder(folder_id)
+    return {"success": True, "message": "Sync folder removed successfully"}
+
+
+@app.post("/sync-folders/{folder_id}/scan")
+async def scan_sync_folder(folder_id: int):
+    """Manually scan a sync folder for existing PDFs."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM sync_folders WHERE id = ?", (folder_id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Sync folder not found")
+
+    # Run scan in background
+    import threading
+    thread = threading.Thread(target=sync_service.scan_folder, args=(folder_id,))
+    thread.start()
+
+    return {"success": True, "message": "Folder scan started"}
 
 
 if __name__ == "__main__":

@@ -14,7 +14,6 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
@@ -373,11 +372,9 @@ class SyncFolderService:
         try:
             # Import here to avoid circular dependencies
             try:
-                from backend.main import (
-                    generate_thumbnail,
-                    process_document,
-                    get_db_connection as get_main_db_connection,
-                )
+                from backend.main import generate_thumbnail
+                from backend.main import get_db_connection as get_main_db_connection
+                from backend.main import process_document
             except ModuleNotFoundError:
                 from main import (
                     generate_thumbnail,

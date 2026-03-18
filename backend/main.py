@@ -553,7 +553,11 @@ def process_document(text: str, filename: str):
         # Determine category
         if "invoice" in text_lower or "bill" in text_lower or "rechnung" in text_lower:
             category = "Invoice"
-        elif "contract" in text_lower or "agreement" in text_lower or "vertrag" in text_lower:
+        elif (
+            "contract" in text_lower
+            or "agreement" in text_lower
+            or "vertrag" in text_lower
+        ):
             category = "Contract"
         elif "receipt" in text_lower or "quittung" in text_lower:
             category = "Receipt"
@@ -564,7 +568,11 @@ def process_document(text: str, filename: str):
         tags = []
 
         # Common document types in filename
-        if "payroll" in filename_lower or "gehalt" in filename_lower or "lohn" in filename_lower:
+        if (
+            "payroll" in filename_lower
+            or "gehalt" in filename_lower
+            or "lohn" in filename_lower
+        ):
             tags.extend(["payroll", "salary"])
         if "birth" in filename_lower or "geburt" in filename_lower:
             tags.extend(["birth certificate"])
@@ -714,7 +722,9 @@ Respond in JSON format:
 
             # If all tags were filtered out or empty, use fallback to rule-based processing
             if not filtered_tags:
-                print(f"AI generated no valid tags for {filename}, falling back to rule-based")
+                print(
+                    f"AI generated no valid tags for {filename}, falling back to rule-based"
+                )
                 return fallback_processing()
 
             return filtered_tags, category
@@ -1090,27 +1100,27 @@ async def list_sync_folders():
     """Get all configured sync folders."""
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        """
+    cursor.execute("""
         SELECT id, source_path, enabled, move_after_processing, created_date, last_scan
         FROM sync_folders
         ORDER BY created_date DESC
-        """
-    )
+        """)
     rows = cursor.fetchall()
     conn.close()
 
     folders = []
     for row in rows:
-        folders.append({
-            "id": row["id"],
-            "source_path": row["source_path"],
-            "enabled": bool(row["enabled"]),
-            "move_after_processing": bool(row["move_after_processing"]),
-            "created_date": row["created_date"],
-            "last_scan": row["last_scan"],
-            "is_watching": row["id"] in sync_service.observers
-        })
+        folders.append(
+            {
+                "id": row["id"],
+                "source_path": row["source_path"],
+                "enabled": bool(row["enabled"]),
+                "move_after_processing": bool(row["move_after_processing"]),
+                "created_date": row["created_date"],
+                "last_scan": row["last_scan"],
+                "is_watching": row["id"] in sync_service.observers,
+            }
+        )
 
     return folders
 
@@ -1128,13 +1138,13 @@ async def create_sync_folder(folder: SyncFolderCreate):
 
     try:
         folder_id = sync_service.add_folder(
-            folder.source_path,
-            folder.enabled,
-            folder.move_after_processing
+            folder.source_path, folder.enabled, folder.move_after_processing
         )
         return {"id": folder_id, "message": "Sync folder added successfully"}
     except sqlite3.IntegrityError:
-        raise HTTPException(status_code=400, detail="This folder is already being synced")
+        raise HTTPException(
+            status_code=400, detail="This folder is already being synced"
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1211,6 +1221,7 @@ async def scan_sync_folder(folder_id: int):
 
     # Run scan in background
     import threading
+
     thread = threading.Thread(target=sync_service.scan_folder, args=(folder_id,))
     thread.start()
 
@@ -1326,7 +1337,10 @@ async def restore_backup(file: UploadFile = File(...)):
             sync_service.stop()
 
             # Create backup of current data before restore
-            backup_dir = DATA_DIR / f"pre_restore_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            backup_dir = (
+                DATA_DIR
+                / f"pre_restore_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            )
             backup_dir.mkdir(exist_ok=True)
 
             # Backup current database
@@ -1337,12 +1351,18 @@ async def restore_backup(file: UploadFile = File(...)):
             zip_file.extract("data/documents.db", BASE_DIR)
 
             # Extract PDFs
-            pdf_files = [f for f in file_list if f.startswith("uploads/") and f.endswith(".pdf")]
+            pdf_files = [
+                f for f in file_list if f.startswith("uploads/") and f.endswith(".pdf")
+            ]
             for pdf_file in pdf_files:
                 zip_file.extract(pdf_file, BASE_DIR)
 
             # Extract thumbnails
-            thumb_files = [f for f in file_list if f.startswith("thumbnails/") and f.endswith(".jpg")]
+            thumb_files = [
+                f
+                for f in file_list
+                if f.startswith("thumbnails/") and f.endswith(".jpg")
+            ]
             for thumb_file in thumb_files:
                 zip_file.extract(thumb_file, BASE_DIR)
 

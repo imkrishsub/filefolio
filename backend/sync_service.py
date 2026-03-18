@@ -20,8 +20,7 @@ from watchdog.observers import Observer
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -29,7 +28,13 @@ logger = logging.getLogger(__name__)
 class PDFHandler(FileSystemEventHandler):
     """Handles file system events for PDF files."""
 
-    def __init__(self, folder_id: int, source_path: str, process_callback, move_after: bool = False):
+    def __init__(
+        self,
+        folder_id: int,
+        source_path: str,
+        process_callback,
+        move_after: bool = False,
+    ):
         """
         Initialize PDF handler.
 
@@ -53,7 +58,7 @@ class PDFHandler(FileSystemEventHandler):
         file_path = Path(event.src_path)
 
         # Only process PDF files
-        if file_path.suffix.lower() != '.pdf':
+        if file_path.suffix.lower() != ".pdf":
             return
 
         # Wait a bit to ensure file is fully written
@@ -95,7 +100,7 @@ class PDFHandler(FileSystemEventHandler):
         for _ in range(timeout):
             try:
                 # Try to open in append mode to check if file is locked
-                with file_path.open('rb') as f:
+                with file_path.open("rb") as f:
                     # Try to read first byte to ensure it's accessible
                     f.read(1)
                 return True
@@ -116,14 +121,16 @@ class PDFHandler(FileSystemEventHandler):
 
             if success and self.move_after:
                 # Move file to processed folder
-                processed_dir = self.source_path / 'processed'
+                processed_dir = self.source_path / "processed"
                 processed_dir.mkdir(exist_ok=True)
 
                 dest_path = processed_dir / file_path.name
                 # Handle name conflicts
                 counter = 1
                 while dest_path.exists():
-                    dest_path = processed_dir / f"{file_path.stem}_{counter}{file_path.suffix}"
+                    dest_path = (
+                        processed_dir / f"{file_path.stem}_{counter}{file_path.suffix}"
+                    )
                     counter += 1
 
                 file_path.rename(dest_path)
@@ -179,9 +186,9 @@ class SyncFolderService:
         # Start watching each folder
         for folder in folders:
             self._start_watching(
-                folder['id'],
-                folder['source_path'],
-                bool(folder['move_after_processing'])
+                folder["id"],
+                folder["source_path"],
+                bool(folder["move_after_processing"]),
             )
 
         logger.info(f"Started watching {len(folders)} sync folders")
@@ -228,10 +235,7 @@ class SyncFolderService:
 
         # Create and start new observer
         event_handler = PDFHandler(
-            folder_id,
-            source_path,
-            self._process_pdf,
-            move_after
+            folder_id, source_path, self._process_pdf, move_after
         )
 
         observer = Observer()
@@ -246,7 +250,7 @@ class SyncFolderService:
         cursor = conn.cursor()
         cursor.execute(
             "UPDATE sync_folders SET last_scan = ? WHERE id = ?",
-            (datetime.now().isoformat(), folder_id)
+            (datetime.now().isoformat(), folder_id),
         )
         conn.commit()
         conn.close()
@@ -264,7 +268,9 @@ class SyncFolderService:
             del self.observers[folder_id]
             logger.info(f"Stopped watching folder {folder_id}")
 
-    def add_folder(self, source_path: str, enabled: bool = True, move_after: bool = False) -> int:
+    def add_folder(
+        self, source_path: str, enabled: bool = True, move_after: bool = False
+    ) -> int:
         """
         Add a new sync folder.
 
@@ -285,7 +291,12 @@ class SyncFolderService:
                 INSERT INTO sync_folders (source_path, enabled, move_after_processing, created_date)
                 VALUES (?, ?, ?, ?)
                 """,
-                (source_path, 1 if enabled else 0, 1 if move_after else 0, datetime.now().isoformat())
+                (
+                    source_path,
+                    1 if enabled else 0,
+                    1 if move_after else 0,
+                    datetime.now().isoformat(),
+                ),
             )
             folder_id = cursor.lastrowid
             conn.commit()
@@ -325,14 +336,16 @@ class SyncFolderService:
         cursor.execute("UPDATE sync_folders SET enabled = 1 WHERE id = ?", (folder_id,))
         cursor.execute(
             "SELECT source_path, move_after_processing FROM sync_folders WHERE id = ?",
-            (folder_id,)
+            (folder_id,),
         )
         row = cursor.fetchone()
         conn.commit()
         conn.close()
 
         if row and self.running:
-            self._start_watching(folder_id, row['source_path'], bool(row['move_after_processing']))
+            self._start_watching(
+                folder_id, row["source_path"], bool(row["move_after_processing"])
+            )
 
     def disable_folder(self, folder_id: int):
         """Disable and stop watching a folder."""
@@ -363,13 +376,13 @@ class SyncFolderService:
                 from backend.main import (
                     generate_thumbnail,
                     process_document,
-                    get_db_connection as get_main_db_connection
+                    get_db_connection as get_main_db_connection,
                 )
             except ModuleNotFoundError:
                 from main import (
                     generate_thumbnail,
                     process_document,
-                    get_db_connection as get_main_db_connection
+                    get_db_connection as get_main_db_connection,
                 )
             import pypdf
             import pytesseract
@@ -379,7 +392,7 @@ class SyncFolderService:
 
             # Calculate file hash
             sha256_hash = hashlib.sha256()
-            with file_path.open('rb') as f:
+            with file_path.open("rb") as f:
                 while chunk := f.read(8192):
                     sha256_hash.update(chunk)
             file_hash = sha256_hash.hexdigest()
@@ -389,7 +402,7 @@ class SyncFolderService:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT id, original_filename FROM documents WHERE file_hash = ?",
-                (file_hash,)
+                (file_hash,),
             )
             duplicate = cursor.fetchone()
             conn.close()
@@ -406,7 +419,7 @@ class SyncFolderService:
             dest_path = self.upload_dir / stored_filename
 
             # Copy file
-            with file_path.open('rb') as src, dest_path.open('wb') as dst:
+            with file_path.open("rb") as src, dest_path.open("wb") as dst:
                 dst.write(src.read())
 
             # Extract text from PDF
@@ -423,7 +436,9 @@ class SyncFolderService:
                         images = convert_from_path(dest_path, dpi=300)
                         ocr_text = ""
                         for image in images[:20]:
-                            page_text = pytesseract.image_to_string(image, lang="eng+deu")
+                            page_text = pytesseract.image_to_string(
+                                image, lang="eng+deu"
+                            )
                             ocr_text += page_text + " "
 
                         if len(ocr_text.strip()) > len(full_text.strip()):
@@ -463,8 +478,8 @@ class SyncFolderService:
                     category,
                     datetime.now().isoformat(),
                     text_preview,
-                    thumbnail_path
-                )
+                    thumbnail_path,
+                ),
             )
             doc_id = cursor.lastrowid
             conn.commit()
@@ -489,7 +504,9 @@ class SyncFolderService:
         """
         conn = self.get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT source_path FROM sync_folders WHERE id = ?", (folder_id,))
+        cursor.execute(
+            "SELECT source_path FROM sync_folders WHERE id = ?", (folder_id,)
+        )
         row = cursor.fetchone()
         conn.close()
 
@@ -497,14 +514,14 @@ class SyncFolderService:
             logger.error(f"Sync folder {folder_id} not found")
             return
 
-        source_path = Path(row['source_path'])
+        source_path = Path(row["source_path"])
 
         if not source_path.exists():
             logger.error(f"Folder does not exist: {source_path}")
             return
 
         # Find all PDF files
-        pdf_files = list(source_path.glob('*.pdf'))
+        pdf_files = list(source_path.glob("*.pdf"))
         logger.info(f"Found {len(pdf_files)} PDF files in {source_path}")
 
         # Process each file
@@ -517,14 +534,16 @@ class SyncFolderService:
             except Exception as e:
                 logger.error(f"Error processing {pdf_file}: {e}")
 
-        logger.info(f"Processed {processed}/{len(pdf_files)} files from folder {folder_id}")
+        logger.info(
+            f"Processed {processed}/{len(pdf_files)} files from folder {folder_id}"
+        )
 
         # Update last_scan
         conn = self.get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
             "UPDATE sync_folders SET last_scan = ? WHERE id = ?",
-            (datetime.now().isoformat(), folder_id)
+            (datetime.now().isoformat(), folder_id),
         )
         conn.commit()
         conn.close()

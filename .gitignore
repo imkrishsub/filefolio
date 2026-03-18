@@ -40,6 +40,11 @@ thumbnails/
 
 # Utility scripts
 regenerate_thumbnails.py
+fix_tags.py
+
+# Local notes
+IMPROVEMENTS.md
+TASKS.md
 
 # OS
 .DS_Store

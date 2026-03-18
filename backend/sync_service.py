@@ -13,7 +13,7 @@ import sqlite3
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+
 
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer

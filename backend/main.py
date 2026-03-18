@@ -392,7 +392,10 @@ async def upload_pdf(file: UploadFile = File(...)):
         file_path.unlink()
         raise HTTPException(
             status_code=409,
-            detail=f"Duplicate file detected. This file was already uploaded as '{duplicate[1]}' on {duplicate[2][:10]}",
+            detail=(
+                f"Duplicate file detected. This file was already uploaded as"
+                f" '{duplicate[1]}' on {duplicate[2][:10]}"
+            ),
         )
 
     # Extract text from PDF for search indexing
@@ -602,8 +605,10 @@ CRITICAL REQUIREMENT - TAGS MUST BE IN ENGLISH AND PROPERLY FORMATTED:
 - Do NOT use very short tags (minimum 3 characters)
 - Use spaces, NOT underscores (e.g., "birth certificate" not "birth_certificate")
 - Keep tags lowercase and simple (e.g., "payroll", "salary", "dental care", "reimbursement")
-- DO NOT use generic category names as tags (e.g., do NOT use "invoice", "receipt", "contract", "letter", "report", "form", "statement", "tax", "insurance", "document" as tags)
-- Tags should be SPECIFIC descriptors (e.g., "dental care", "teeth cleaning", "reimbursement" instead of just "invoice" or "document")
+- DO NOT use generic category names as tags (e.g., do NOT use "invoice", "receipt", "contract",
+  "letter", "report", "form", "statement", "tax", "insurance", "document" as tags)
+- Tags should be SPECIFIC descriptors (e.g., "dental care", "teeth cleaning", "reimbursement"
+  instead of just "invoice" or "document")
 - Existing tags in the system: {existing_tags_str}
 - STRONGLY PREFER to reuse existing tags when they are relevant
 - Only create new English tags if existing tags don't apply

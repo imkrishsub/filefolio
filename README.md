@@ -10,7 +10,10 @@ A local-first document organization tool that automatically tags, categorizes, a
 
 - **Smart organization** - AI-powered automatic categorization, tagging, and filename generation
 - **Privacy-first** - All processing happens locally on your machine, no cloud services
+- **Folder sync** - Watch a local folder and automatically import new PDFs
+- **Backup & restore** - Export and import your entire library as a ZIP archive
 - **Multi-language support** - UI available in multiple languages
+- **Dark mode** - Toggle between light and dark themes
 - **Drag & drop interface** - Simple and intuitive file upload
 - **Full-text search** - Search through document content and metadata
 - **Thumbnail previews** - Visual preview of your documents
@@ -20,18 +23,22 @@ A local-first document organization tool that automatically tags, categorizes, a
 
 ## Prerequisites
 
-- Python 3.8+
+- Python 3.10+
 - [Ollama](https://ollama.ai) installed locally
 - Poppler (for PDF processing)
   - macOS: `brew install poppler`
   - Ubuntu/Debian: `apt-get install poppler-utils`
   - Windows: Download from [poppler releases](https://github.com/oschwartz10612/poppler-windows/releases/)
+- Tesseract (for OCR on scanned documents)
+  - macOS: `brew install tesseract`
+  - Ubuntu/Debian: `apt-get install tesseract-ocr`
+  - Windows: Download from [Tesseract releases](https://github.com/UB-Mannheim/tesseract/wiki)
 
 ## Quick start
 
 1. **Clone the repository**
 ```bash
-git clone https://github.com/yourusername/filefolio.git
+git clone https://github.com/imkrishsub/filefolio.git
 cd filefolio
 ```
 
@@ -82,7 +89,8 @@ Full API and functionality coverage including unit tests, integration tests, and
 ```
 filefolio/
 ├── backend/
-│   └── main.py          # FastAPI server
+│   ├── main.py          # FastAPI server
+│   └── sync_service.py  # Folder sync service
 ├── frontend/
 │   ├── static/
 │   │   ├── app.js       # Frontend JavaScript
@@ -94,12 +102,14 @@ filefolio/
 ├── uploads/             # PDF storage (created on first run)
 ├── thumbnails/          # Document thumbnails (created on first run)
 ├── data/                # Database (created on first run)
+├── setup.cfg            # Linting and tool configuration
+├── pytest.ini           # Test configuration
 └── requirements.txt
 ```
 
 ## How it works
 
-1. **Upload** - Drag and drop a PDF file into the web interface
+1. **Upload** - Drag and drop a PDF file into the web interface, or sync a local folder to automatically import new files
 2. **Extract** - Text is extracted from the PDF (with OCR fallback for scanned documents)
 3. **Analyze** - A local LLM analyzes the content to determine category, tags, and suggest a filename
 4. **Organize** - The document is saved with metadata in a local SQLite database

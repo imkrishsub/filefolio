@@ -18,7 +18,7 @@ FileFolio watches a folder, uses a local LLM via Ollama to analyze each PDF, and
 
 ## Features
 
-- **Automatic organization** – watches a folder and imports new PDFs, extracting text (with OCR), then generating categories, tags, and human-readable filenames
+- **Automatic organization** – watches a folder and imports new PDFs, extracting text (with OCR), then generating categories and tags
 - **Privacy-first** – all processing happens locally with Ollama, no cloud services, no telemetry or analytics
 - **Fast retrieval** – full-text search across content and metadata, plus thumbnail previews
 - **Disaster-proof** – backup and restore your entire library via ZIP

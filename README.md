@@ -4,7 +4,7 @@ A local-first document organization tool that automatically tags, categorizes, a
 
 [![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/krishsub)
 
-![FileFolio Preview](preview.jpg)
+![FileFolio Preview](preview.png)
 
 ## Features
 

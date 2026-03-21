@@ -1,25 +1,29 @@
 # FileFolio
 
-A local-first document organization tool that automatically tags, categorizes, and renames your PDF files using AI. Keep your documents private while enjoying smart organization powered by local LLMs.
+FileFolio helps privacy-conscious professionals keep large PDF collections searchable and organized using local AI. No cloud, no telemetry, all on your machine.
 
 [![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/krishsub)
 
 ![FileFolio Preview](preview.png)
 
+**Status:** Actively maintained, used on my own 1,000+ PDF collection. Expect breaking changes before v1.0, but I'm responsive to issues and feedback.
+
+## Why FileFolio?
+
+- You have hundreds of PDF bills, reports, or research papers scattered in folders.
+- You care about privacy and do not want to upload them to cloud AI services.
+- You still want smart search, auto-tagging, and reasonable file names.
+
+FileFolio watches a folder, uses a local LLM via Ollama to analyze each PDF, and keeps everything searchable in one interface.
+
 ## Features
 
-- **Smart organization** - AI-powered automatic categorization, tagging, and filename generation
-- **Privacy-first** - All processing happens locally on your machine, no cloud services
-- **Folder sync** - Watch a local folder and automatically import new PDFs
-- **Backup & restore** - Export and import your entire library as a ZIP archive
-- **Multi-language support** - UI available in multiple languages
-- **Dark mode** - Toggle between light and dark themes
-- **Drag & drop interface** - Simple and intuitive file upload
-- **Full-text search** - Search through document content and metadata
-- **Thumbnail previews** - Visual preview of your documents
-- **Bulk operations** - Download multiple documents at once
-- **Local LLM integration** - Uses Ollama for AI-powered features
-- **OCR support** - Extract text from scanned documents
+- **Automatic organization** – watches a folder and imports new PDFs, extracting text (with OCR), then generating categories, tags, and human-readable filenames
+- **Privacy-first** – all processing happens locally with Ollama, no cloud services, no telemetry or analytics
+- **Fast retrieval** – full-text search across content and metadata, plus thumbnail previews
+- **Disaster-proof** – backup and restore your entire library via ZIP
+- **Multi-language support** – UI available in multiple languages
+- **Dark mode** – toggle between light and dark themes
 
 ## Prerequisites
 
@@ -131,11 +135,3 @@ Contributions are welcome! Please feel free to submit a pull request or open an 
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details.
-
-## Privacy
-
-FileFolio is designed with privacy in mind:
-- All documents stay on your local machine
-- No data is sent to external servers
-- AI processing happens locally via Ollama
-- No telemetry or analytics

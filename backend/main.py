@@ -797,16 +797,10 @@ async def list_documents(
     conn = get_db_connection()
     cursor = conn.cursor()
 
+    fts_query = _sanitize_fts_query(search) if search else ""
+
     # Use FTS5 for search if search term provided
-    if search:
-        # Escape FTS5 special characters and prepare fuzzy query
-        fts_query = search.replace('"', '""')
-
-        # Add wildcard suffix for prefix matching (fuzzy search)
-        # This allows "payro" to match "payroll"
-        fts_query = fts_query + "*"
-
-        # Build the query using FTS5
+    if fts_query:
         query = """
             SELECT d.* FROM documents d
             INNER JOIN documents_fts fts ON d.id = fts.rowid

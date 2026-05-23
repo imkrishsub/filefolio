@@ -92,6 +92,54 @@ class TestDocumentsEndpoint:
         data = response.json()
         assert isinstance(data, list)
 
+    def test_search_column_filter_returns_200(self, client):
+        response = client.get("/documents?search=original_filename%3Asecret")
+        assert response.status_code == 200
+        assert isinstance(response.json(), list)
+
+    def test_search_parens_returns_200(self, client):
+        response = client.get("/documents?search=%28invoice+OR+receipt%29")
+        assert response.status_code == 200
+        assert isinstance(response.json(), list)
+
+    def test_search_boolean_keyword_returns_200(self, client):
+        response = client.get("/documents?search=invoice+NOT+draft")
+        assert response.status_code == 200
+        assert isinstance(response.json(), list)
+
+    def test_search_phrase_returns_200(self, client):
+        response = client.get('/documents?search=%22tax+return%22')
+        assert response.status_code == 200
+        assert isinstance(response.json(), list)
+
+    def test_search_mixed_phrase_and_bare_returns_200(self, client):
+        response = client.get('/documents?search=%22tax+return%22+2024')
+        assert response.status_code == 200
+        assert isinstance(response.json(), list)
+
+    @pytest.mark.parametrize("q", [
+        '"unclosed',
+        '"',
+        'invoice*',
+        'inv* rec*',
+        '-invoice',
+        'price,discount',
+    ])
+    def test_search_crash_vectors_return_200(self, client, q):
+        import urllib.parse
+        response = client.get(f"/documents?search={urllib.parse.quote(q)}")
+        assert response.status_code == 200
+        assert isinstance(response.json(), list)
+
+    def test_search_all_operators_falls_back_to_all_docs(self, client, sample_pdf_bytes, mock_ollama_response):
+        files = {"file": ("test.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")}
+        client.post("/upload", files=files)
+        response = client.get("/documents?search=:::")
+        assert response.status_code == 200
+        docs = response.json()
+        assert isinstance(docs, list)
+        assert len(docs) >= 1
+
 
 class TestDocumentEndpoint:
     """Tests for individual document operations."""

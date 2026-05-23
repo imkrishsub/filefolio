@@ -752,7 +752,15 @@ def _sanitize_fts_query(raw: str) -> str:
             sanitized.append(part)
             last_is_bare = False
         else:
-            segment = part.replace(":", " ").replace("(", " ").replace(")", " ")
+            segment = (
+                part.replace(":", " ")
+                .replace("(", " ")
+                .replace(")", " ")
+                .replace('"', " ")
+                .replace("*", " ")
+                .replace("-", " ")
+                .replace(",", " ")
+            )
             segment = re.sub(r"\b(AND|OR|NOT)\b", lambda m: m.group().lower(), segment)
             segment = " ".join(segment.split())
             if segment:
@@ -861,8 +869,11 @@ async def list_documents(
 
         query += " ORDER BY upload_date DESC"
 
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
+    try:
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+    except sqlite3.OperationalError:
+        rows = []
     conn.close()
 
     documents = []

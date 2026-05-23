@@ -737,6 +737,47 @@ Respond in JSON format:
         return fallback_processing()
 
 
+def _sanitize_fts_query(raw: str) -> str:
+    if not raw or not raw.strip():
+        return ""
+
+    # Split on "..." quoted phrase tokens (capturing group keeps them in the list)
+    parts = re.split(r'("(?:[^"]|"")*")', raw)
+
+    sanitized = []
+    last_is_bare = False
+
+    for part in parts:
+        if part.startswith('"') and part.endswith('"') and len(part) >= 2:
+            sanitized.append(part)
+            last_is_bare = False
+        else:
+            segment = (
+                part.replace(":", " ")
+                .replace("(", " ")
+                .replace(")", " ")
+                .replace('"', " ")
+                .replace("*", " ")
+                .replace("-", " ")
+                .replace(",", " ")
+            )
+            segment = re.sub(r"\b(AND|OR|NOT)\b", lambda m: m.group().lower(), segment)
+            segment = " ".join(segment.split())
+            if segment:
+                tokens = segment.split()
+                has_real_token = any(t not in {"and", "or", "not"} for t in tokens)
+                sanitized.append(segment)
+                last_is_bare = has_real_token
+
+    if not sanitized:
+        return ""
+
+    result = " ".join(sanitized)
+    if last_is_bare:
+        result += "*"
+    return result
+
+
 @app.get("/documents")
 async def list_documents(
     search: str = None,
@@ -764,16 +805,10 @@ async def list_documents(
     conn = get_db_connection()
     cursor = conn.cursor()
 
+    fts_query = _sanitize_fts_query(search) if search else ""
+
     # Use FTS5 for search if search term provided
-    if search:
-        # Escape FTS5 special characters and prepare fuzzy query
-        fts_query = search.replace('"', '""')
-
-        # Add wildcard suffix for prefix matching (fuzzy search)
-        # This allows "payro" to match "payroll"
-        fts_query = fts_query + "*"
-
-        # Build the query using FTS5
+    if fts_query:
         query = """
             SELECT d.* FROM documents d
             INNER JOIN documents_fts fts ON d.id = fts.rowid
@@ -834,8 +869,11 @@ async def list_documents(
 
         query += " ORDER BY upload_date DESC"
 
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
+    try:
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+    except sqlite3.OperationalError:
+        rows = []
     conn.close()
 
     documents = []

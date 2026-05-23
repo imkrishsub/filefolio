@@ -92,6 +92,54 @@ class TestDocumentsEndpoint:
         data = response.json()
         assert isinstance(data, list)
 
+    def test_search_column_filter_returns_200(self, client):
+        response = client.get("/documents?search=original_filename%3Asecret")
+        assert response.status_code == 200
+        assert isinstance(response.json(), list)
+
+    def test_search_parens_returns_200(self, client):
+        response = client.get("/documents?search=%28invoice+OR+receipt%29")
+        assert response.status_code == 200
+        assert isinstance(response.json(), list)
+
+    def test_search_boolean_keyword_returns_200(self, client):
+        response = client.get("/documents?search=invoice+NOT+draft")
+        assert response.status_code == 200
+        assert isinstance(response.json(), list)
+
+    def test_search_phrase_returns_200(self, client):
+        response = client.get('/documents?search=%22tax+return%22')
+        assert response.status_code == 200
+        assert isinstance(response.json(), list)
+
+    def test_search_mixed_phrase_and_bare_returns_200(self, client):
+        response = client.get('/documents?search=%22tax+return%22+2024')
+        assert response.status_code == 200
+        assert isinstance(response.json(), list)
+
+    @pytest.mark.parametrize("q", [
+        '"unclosed',
+        '"',
+        'invoice*',
+        'inv* rec*',
+        '-invoice',
+        'price,discount',
+    ])
+    def test_search_crash_vectors_return_200(self, client, q):
+        import urllib.parse
+        response = client.get(f"/documents?search={urllib.parse.quote(q)}")
+        assert response.status_code == 200
+        assert isinstance(response.json(), list)
+
+    def test_search_all_operators_falls_back_to_all_docs(self, client, sample_pdf_bytes, mock_ollama_response):
+        files = {"file": ("test.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")}
+        client.post("/upload", files=files)
+        response = client.get("/documents?search=:::")
+        assert response.status_code == 200
+        docs = response.json()
+        assert isinstance(docs, list)
+        assert len(docs) >= 1
+
 
 class TestDocumentEndpoint:
     """Tests for individual document operations."""
@@ -338,3 +386,64 @@ class TestRestoreEndpoint:
 
         assert response.status_code == 400
         assert "Unsafe path" in response.json()["detail"]
+
+
+class TestSanitizeFtsQuery:
+    """Unit tests for the _sanitize_fts_query helper."""
+
+    def _fn(self):
+        from backend.main import _sanitize_fts_query
+        return _sanitize_fts_query
+
+    def test_bare_word_gets_wildcard(self):
+        fn = self._fn()
+        assert fn("invoice") == "invoice*"
+
+    def test_column_filter_colon_stripped(self):
+        fn = self._fn()
+        assert fn("original_filename:secret") == "original_filename secret*"
+
+    def test_parens_stripped(self):
+        fn = self._fn()
+        assert fn("(invoice OR receipt)") == "invoice or receipt*"
+
+    def test_uppercase_and_lowercased(self):
+        fn = self._fn()
+        assert fn("tax AND return") == "tax and return*"
+
+    def test_uppercase_or_lowercased(self):
+        fn = self._fn()
+        assert fn("invoice OR receipt") == "invoice or receipt*"
+
+    def test_uppercase_not_lowercased(self):
+        fn = self._fn()
+        assert fn("invoice NOT draft") == "invoice not draft*"
+
+    def test_phrase_preserved(self):
+        fn = self._fn()
+        assert fn('"tax return"') == '"tax return"'
+
+    def test_phrase_plus_bare_word(self):
+        fn = self._fn()
+        assert fn('"tax return" 2024') == '"tax return" 2024*'
+
+    def test_all_operators_returns_empty(self):
+        fn = self._fn()
+        assert fn(":::") == ""
+
+    def test_empty_string_returns_empty(self):
+        fn = self._fn()
+        assert fn("") == ""
+
+    def test_whitespace_only_returns_empty(self):
+        fn = self._fn()
+        assert fn("   ") == ""
+
+    def test_operator_only_no_wildcard(self):
+        fn = self._fn()
+        result = fn("AND OR NOT")
+        assert not result.endswith('*')
+
+    def test_escaped_quote_inside_phrase(self):
+        fn = self._fn()
+        assert fn('"say ""hello"" now"') == '"say ""hello"" now"'

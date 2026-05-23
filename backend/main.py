@@ -22,6 +22,7 @@ import re
 import shutil
 import sqlite3
 import tempfile
+import urllib.parse
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -937,11 +938,13 @@ async def download_single_document(doc_id: int):
     if not Path(file_path).exists():
         raise HTTPException(status_code=404, detail="File not found on disk")
 
+    encoded_filename = urllib.parse.quote(original_filename)
     return FileResponse(
         file_path,
         media_type="application/pdf",
-        filename=original_filename,
-        headers={"Content-Disposition": f"attachment; filename={original_filename}"},
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+        },
     )
 
 

@@ -41,6 +41,12 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
+# File size limits
+MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100 MB — single PDF upload
+MAX_RESTORE_SIZE = (
+    2 * 1024 * 1024 * 1024
+)  # 2 GB — backup ZIP (may contain full library)
+
 # Setup directories
 BASE_DIR = Path(__file__).resolve().parent.parent
 UPLOAD_DIR = BASE_DIR / "uploads"
@@ -369,10 +375,18 @@ async def upload_pdf(file: UploadFile = File(...)):
     stored_filename = f"{timestamp}_{file.filename}"
     file_path = UPLOAD_DIR / stored_filename
 
-    # Calculate file hash while saving
+    # Stream to disk, enforcing size limit and calculating SHA-256 hash in one pass
     sha256_hash = hashlib.sha256()
+    bytes_written = 0
     with file_path.open("wb") as buffer:
         while chunk := await file.read(8192):
+            bytes_written += len(chunk)
+            if bytes_written > MAX_UPLOAD_SIZE:
+                file_path.unlink(missing_ok=True)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large. Maximum upload size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB.",
+                )
             sha256_hash.update(chunk)
             buffer.write(chunk)
 
@@ -1366,13 +1380,22 @@ async def restore_backup(file: UploadFile = File(...)):
 
     temp_backup_path = None
     try:
-        # Save uploaded backup file temporarily
+        # Stream backup to a temp file, enforcing the size limit
         temp_backup = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-        with temp_backup as buffer:
-            content = await file.read()
-            buffer.write(content)
-
         temp_backup_path = temp_backup.name
+        bytes_written = 0
+        with temp_backup as buffer:
+            while chunk := await file.read(65536):
+                bytes_written += len(chunk)
+                if bytes_written > MAX_RESTORE_SIZE:
+                    temp_backup.close()
+                    os.unlink(temp_backup_path)
+                    limit_gb = MAX_RESTORE_SIZE // (1024 * 1024 * 1024)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Backup file too large. Maximum restore size is {limit_gb} GB.",
+                    )
+                buffer.write(chunk)
 
         # Extract and validate backup
         with zipfile.ZipFile(temp_backup_path, "r") as zip_file:
@@ -1453,6 +1476,8 @@ async def restore_backup(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=str(e))
     except zipfile.BadZipFile:
         raise HTTPException(status_code=400, detail="Invalid ZIP file")
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Restore error: {e}")
         # Try to restart sync service if it was stopped

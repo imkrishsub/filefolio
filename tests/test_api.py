@@ -40,6 +40,28 @@ class TestUploadEndpoint:
         assert response.status_code == 400
         assert "Only PDF files are allowed" in response.json()["detail"]
 
+    def test_upload_oversized_pdf_rejected(self, client, monkeypatch):
+        """Test that PDFs exceeding the size limit are rejected with 413."""
+        import backend.main as main
+
+        monkeypatch.setattr(main, "MAX_UPLOAD_SIZE", 10)  # 10 bytes limit for the test
+        oversized = b"%PDF-" + b"x" * 20
+        files = {"file": ("big.pdf", io.BytesIO(oversized), "application/pdf")}
+        response = client.post("/upload", files=files)
+
+        assert response.status_code == 413
+        assert "too large" in response.json()["detail"].lower()
+
+    def test_upload_at_size_limit_accepted(self, client, sample_pdf_bytes, mock_ollama_response, monkeypatch):
+        """Test that a file exactly at the size limit is accepted."""
+        import backend.main as main
+
+        monkeypatch.setattr(main, "MAX_UPLOAD_SIZE", len(sample_pdf_bytes))
+        files = {"file": ("limit.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")}
+        response = client.post("/upload", files=files)
+
+        assert response.status_code == 200
+
     def test_upload_duplicate_detection(self, client, sample_pdf_bytes, mock_ollama_response):
         """Test that duplicate files are detected."""
         files = {"file": ("test.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")}
@@ -386,6 +408,47 @@ class TestRestoreEndpoint:
 
         assert response.status_code == 400
         assert "Unsafe path" in response.json()["detail"]
+
+    def test_restore_oversized_zip_rejected(self, tmp_path, monkeypatch):
+        """ZIP files exceeding the size limit must be rejected with 413."""
+        import zipfile
+        import backend.main as main
+        from fastapi.testclient import TestClient
+        from backend.sync_service import SyncFolderService
+
+        base_dir = tmp_path / "base"
+        (base_dir / "data").mkdir(parents=True)
+        (base_dir / "uploads").mkdir()
+        (base_dir / "thumbnails").mkdir()
+
+        monkeypatch.setattr(main, "BASE_DIR", base_dir)
+        monkeypatch.setattr(main, "DATA_DIR", base_dir / "data")
+        monkeypatch.setattr(main, "DB_PATH", base_dir / "data" / "documents.db")
+        monkeypatch.setattr(main, "UPLOAD_DIR", base_dir / "uploads")
+        monkeypatch.setattr(main, "THUMBNAILS_DIR", base_dir / "thumbnails")
+        monkeypatch.setattr(main, "MAX_RESTORE_SIZE", 10)  # 10-byte limit for the test
+
+        main.init_db()
+        main.sync_service = SyncFolderService(
+            base_dir / "data" / "documents.db",
+            base_dir / "uploads",
+            base_dir / "thumbnails",
+        )
+
+        client = TestClient(main.app)
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("data/documents.db", b"x" * 100)
+        buf.seek(0)
+
+        response = client.post(
+            "/restore",
+            files={"file": ("big_backup.zip", buf, "application/zip")},
+        )
+
+        assert response.status_code == 413
+        assert "too large" in response.json()["detail"].lower()
 
 
 class TestSanitizeFtsQuery:

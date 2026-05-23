@@ -390,3 +390,12 @@ class TestSanitizeFtsQuery:
     def test_whitespace_only_returns_empty(self):
         fn = self._fn()
         assert fn("   ") == ""
+
+    def test_operator_only_no_wildcard(self):
+        fn = self._fn()
+        result = fn("AND OR NOT")
+        assert not result.endswith('*')
+
+    def test_escaped_quote_inside_phrase(self):
+        fn = self._fn()
+        assert fn('"say ""hello"" now"') == '"say ""hello"" now"'

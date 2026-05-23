@@ -756,8 +756,10 @@ def _sanitize_fts_query(raw: str) -> str:
             segment = re.sub(r"\b(AND|OR|NOT)\b", lambda m: m.group().lower(), segment)
             segment = " ".join(segment.split())
             if segment:
+                tokens = segment.split()
+                has_real_token = any(t not in {"and", "or", "not"} for t in tokens)
                 sanitized.append(segment)
-                last_is_bare = True
+                last_is_bare = has_real_token
 
     if not sanitized:
         return ""

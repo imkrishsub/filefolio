@@ -338,3 +338,55 @@ class TestRestoreEndpoint:
 
         assert response.status_code == 400
         assert "Unsafe path" in response.json()["detail"]
+
+
+class TestSanitizeFtsQuery:
+    """Unit tests for the _sanitize_fts_query helper."""
+
+    def _fn(self):
+        from backend.main import _sanitize_fts_query
+        return _sanitize_fts_query
+
+    def test_bare_word_gets_wildcard(self):
+        fn = self._fn()
+        assert fn("invoice") == "invoice*"
+
+    def test_column_filter_colon_stripped(self):
+        fn = self._fn()
+        assert fn("original_filename:secret") == "original_filename secret*"
+
+    def test_parens_stripped(self):
+        fn = self._fn()
+        assert fn("(invoice OR receipt)") == "invoice or receipt*"
+
+    def test_uppercase_and_lowercased(self):
+        fn = self._fn()
+        assert fn("tax AND return") == "tax and return*"
+
+    def test_uppercase_or_lowercased(self):
+        fn = self._fn()
+        assert fn("invoice OR receipt") == "invoice or receipt*"
+
+    def test_uppercase_not_lowercased(self):
+        fn = self._fn()
+        assert fn("invoice NOT draft") == "invoice not draft*"
+
+    def test_phrase_preserved(self):
+        fn = self._fn()
+        assert fn('"tax return"') == '"tax return"'
+
+    def test_phrase_plus_bare_word(self):
+        fn = self._fn()
+        assert fn('"tax return" 2024') == '"tax return" 2024*'
+
+    def test_all_operators_returns_empty(self):
+        fn = self._fn()
+        assert fn(":::") == ""
+
+    def test_empty_string_returns_empty(self):
+        fn = self._fn()
+        assert fn("") == ""
+
+    def test_whitespace_only_returns_empty(self):
+        fn = self._fn()
+        assert fn("   ") == ""

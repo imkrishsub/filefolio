@@ -245,3 +245,96 @@ class TestBulkDownloadEndpoint:
         """Test downloading documents that don't exist."""
         response = client.post("/download/multiple", json={"document_ids": [99999, 99998]})
         assert response.status_code == 404
+
+
+class TestRestoreEndpoint:
+    """Tests for the /restore endpoint."""
+
+    def test_restore_rejects_zip_slip(self, tmp_path, monkeypatch):
+        """ZIP entries with path traversal sequences must be rejected."""
+        import zipfile
+        import backend.main as main
+        from fastapi.testclient import TestClient
+        from backend.sync_service import SyncFolderService
+
+        base_dir = tmp_path / "base"
+        (base_dir / "data").mkdir(parents=True)
+        (base_dir / "uploads").mkdir()
+        (base_dir / "thumbnails").mkdir()
+
+        monkeypatch.setattr(main, "BASE_DIR", base_dir)
+        monkeypatch.setattr(main, "DATA_DIR", base_dir / "data")
+        monkeypatch.setattr(main, "DB_PATH", base_dir / "data" / "documents.db")
+        monkeypatch.setattr(main, "UPLOAD_DIR", base_dir / "uploads")
+        monkeypatch.setattr(main, "THUMBNAILS_DIR", base_dir / "thumbnails")
+
+        main.init_db()
+        main.sync_service = SyncFolderService(
+            base_dir / "data" / "documents.db",
+            base_dir / "uploads",
+            base_dir / "thumbnails",
+        )
+
+        client = TestClient(main.app)
+
+        # "uploads/../../pwned.pdf" resolves to tmp_path/pwned.pdf — outside base_dir
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("data/documents.db", b"SQLite format 3\x00" + b"\x00" * 84)
+            zf.writestr("uploads/../../pwned.pdf", b"should not be written")
+        buf.seek(0)
+
+        pwned_path = tmp_path / "pwned.pdf"
+
+        response = client.post(
+            "/restore",
+            files={"file": ("backup.zip", buf, "application/zip")},
+        )
+
+        assert response.status_code == 400
+        assert "Unsafe path" in response.json()["detail"]
+        assert not pwned_path.exists()
+
+    def test_restore_rejects_symlink_entry(self, tmp_path, monkeypatch):
+        """ZIP entries that are symlinks must be rejected."""
+        import zipfile
+        import backend.main as main
+        from fastapi.testclient import TestClient
+        from backend.sync_service import SyncFolderService
+
+        base_dir = tmp_path / "base"
+        (base_dir / "data").mkdir(parents=True)
+        (base_dir / "uploads").mkdir()
+        (base_dir / "thumbnails").mkdir()
+
+        monkeypatch.setattr(main, "BASE_DIR", base_dir)
+        monkeypatch.setattr(main, "DATA_DIR", base_dir / "data")
+        monkeypatch.setattr(main, "DB_PATH", base_dir / "data" / "documents.db")
+        monkeypatch.setattr(main, "UPLOAD_DIR", base_dir / "uploads")
+        monkeypatch.setattr(main, "THUMBNAILS_DIR", base_dir / "thumbnails")
+
+        main.init_db()
+        main.sync_service = SyncFolderService(
+            base_dir / "data" / "documents.db",
+            base_dir / "uploads",
+            base_dir / "thumbnails",
+        )
+
+        client = TestClient(main.app)
+
+        # Build a ZIP with a symlink entry (Unix mode 0o120777 = 0xA1FF, stored in high 16 bits)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("data/documents.db", b"SQLite format 3\x00" + b"\x00" * 84)
+            info = zipfile.ZipInfo("uploads/link.pdf")
+            info.external_attr = 0xA1FF << 16  # symlink with rwxrwxrwx permissions
+            zf.writestr(info, "/etc/passwd")   # symlink target stored as content
+        buf.seek(0)
+
+        response = client.post(
+            "/restore",
+            files={"file": ("backup.zip", buf, "application/zip")},
+        )
+
+        assert response.status_code == 400
+        assert "Unsafe path" in response.json()["detail"]

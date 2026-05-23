@@ -1296,6 +1296,16 @@ async def create_backup():
         raise HTTPException(status_code=500, detail=f"Backup failed: {str(e)}")
 
 
+def _safe_extract(zip_file: zipfile.ZipFile, entry_name: str, base_dir: Path) -> None:
+    info = zip_file.getinfo(entry_name)
+    if (info.external_attr >> 16) & 0xF000 == 0xA000:
+        raise ValueError(f"Unsafe path in archive: {entry_name!r}")
+    dest = (base_dir / entry_name).resolve()
+    if not dest.is_relative_to(base_dir.resolve()):
+        raise ValueError(f"Unsafe path in archive: {entry_name!r}")
+    zip_file.extract(entry_name, base_dir)
+
+
 @app.post("/restore")
 async def restore_backup(file: UploadFile = File(...)):
     """
@@ -1313,6 +1323,7 @@ async def restore_backup(file: UploadFile = File(...)):
     if not file.filename.endswith(".zip"):
         raise HTTPException(status_code=400, detail="Only ZIP files are allowed")
 
+    temp_backup_path = None
     try:
         # Save uploaded backup file temporarily
         temp_backup = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
@@ -1348,14 +1359,14 @@ async def restore_backup(file: UploadFile = File(...)):
                 shutil.copy2(DB_PATH, backup_dir / "documents.db")
 
             # Extract database
-            zip_file.extract("data/documents.db", BASE_DIR)
+            _safe_extract(zip_file, "data/documents.db", BASE_DIR)
 
             # Extract PDFs
             pdf_files = [
                 f for f in file_list if f.startswith("uploads/") and f.endswith(".pdf")
             ]
             for pdf_file in pdf_files:
-                zip_file.extract(pdf_file, BASE_DIR)
+                _safe_extract(zip_file, pdf_file, BASE_DIR)
 
             # Extract thumbnails
             thumb_files = [
@@ -1364,7 +1375,7 @@ async def restore_backup(file: UploadFile = File(...)):
                 if f.startswith("thumbnails/") and f.endswith(".jpg")
             ]
             for thumb_file in thumb_files:
-                zip_file.extract(thumb_file, BASE_DIR)
+                _safe_extract(zip_file, thumb_file, BASE_DIR)
 
             # Read backup metadata if available
             metadata = {}
@@ -1388,6 +1399,17 @@ async def restore_backup(file: UploadFile = File(...)):
             },
         }
 
+    except ValueError as e:
+        if temp_backup_path is not None:
+            try:
+                os.unlink(temp_backup_path)
+            except OSError:
+                pass
+        try:
+            sync_service.start()
+        except Exception:
+            pass
+        raise HTTPException(status_code=400, detail=str(e))
     except zipfile.BadZipFile:
         raise HTTPException(status_code=400, detail="Invalid ZIP file")
     except Exception as e:

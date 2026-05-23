@@ -367,7 +367,7 @@ async def upload_pdf(file: UploadFile = File(...)):
 
     Returns: Document metadata including suggested tags and category
     """
-    if not file.filename.endswith(".pdf"):
+    if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 
     # Save file temporarily
@@ -378,8 +378,16 @@ async def upload_pdf(file: UploadFile = File(...)):
     # Stream to disk, enforcing size limit and calculating SHA-256 hash in one pass
     sha256_hash = hashlib.sha256()
     bytes_written = 0
+    first_chunk = True
     with file_path.open("wb") as buffer:
         while chunk := await file.read(8192):
+            if first_chunk:
+                if chunk[:4] != b"%PDF":
+                    file_path.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=400, detail="File is not a valid PDF"
+                    )
+                first_chunk = False
             bytes_written += len(chunk)
             if bytes_written > MAX_UPLOAD_SIZE:
                 file_path.unlink(missing_ok=True)

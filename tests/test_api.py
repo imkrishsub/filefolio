@@ -3,8 +3,9 @@ Tests for FileFolio API endpoints.
 Updated to match actual API implementation.
 """
 
-import pytest
 import io
+
+import pytest
 
 
 class TestRootEndpoint:
@@ -40,6 +41,34 @@ class TestUploadEndpoint:
         assert response.status_code == 400
         assert "Only PDF files are allowed" in response.json()["detail"]
 
+    def test_upload_uppercase_extension_accepted(
+        self, client, sample_pdf_bytes, mock_ollama_response
+    ):
+        """Test that uppercase .PDF extension is accepted."""
+        files = {
+            "file": ("DOCUMENT.PDF", io.BytesIO(sample_pdf_bytes), "application/pdf")
+        }
+        response = client.post("/upload", files=files)
+        assert response.status_code == 200
+
+    def test_upload_invalid_magic_bytes_rejected(self, client):
+        """Test that a file with a .pdf extension but invalid content is rejected."""
+        zip_bytes = b"PK\x03\x04" + b"\x00" * 100  # ZIP magic bytes
+        files = {"file": ("fake.pdf", io.BytesIO(zip_bytes), "application/pdf")}
+        response = client.post("/upload", files=files)
+        assert response.status_code == 400
+        assert "not a valid PDF" in response.json()["detail"]
+
+    def test_upload_valid_magic_bytes_accepted(
+        self, client, sample_pdf_bytes, mock_ollama_response
+    ):
+        """Test that a file with correct %PDF magic bytes and .pdf extension is accepted."""
+        files = {
+            "file": ("valid2.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")
+        }
+        response = client.post("/upload", files=files)
+        assert response.status_code == 200
+
     def test_upload_oversized_pdf_rejected(self, client, monkeypatch):
         """Test that PDFs exceeding the size limit are rejected with 413."""
         import backend.main as main
@@ -52,7 +81,9 @@ class TestUploadEndpoint:
         assert response.status_code == 413
         assert "too large" in response.json()["detail"].lower()
 
-    def test_upload_at_size_limit_accepted(self, client, sample_pdf_bytes, mock_ollama_response, monkeypatch):
+    def test_upload_at_size_limit_accepted(
+        self, client, sample_pdf_bytes, mock_ollama_response, monkeypatch
+    ):
         """Test that a file exactly at the size limit is accepted."""
         import backend.main as main
 
@@ -62,7 +93,9 @@ class TestUploadEndpoint:
 
         assert response.status_code == 200
 
-    def test_upload_duplicate_detection(self, client, sample_pdf_bytes, mock_ollama_response):
+    def test_upload_duplicate_detection(
+        self, client, sample_pdf_bytes, mock_ollama_response
+    ):
         """Test that duplicate files are detected."""
         files = {"file": ("test.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")}
 
@@ -88,7 +121,9 @@ class TestDocumentsEndpoint:
         assert isinstance(data, list)
         assert len(data) == 0
 
-    def test_get_documents_after_upload(self, client, sample_pdf_bytes, mock_ollama_response):
+    def test_get_documents_after_upload(
+        self, client, sample_pdf_bytes, mock_ollama_response
+    ):
         """Test retrieving documents after uploading."""
         # Upload a file
         files = {"file": ("test.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")}
@@ -104,7 +139,9 @@ class TestDocumentsEndpoint:
     def test_search_documents(self, client, sample_pdf_bytes, mock_ollama_response):
         """Test searching documents by query."""
         # Upload a file
-        files = {"file": ("invoice.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")}
+        files = {
+            "file": ("invoice.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")
+        }
         client.post("/upload", files=files)
 
         # Search for the document
@@ -130,30 +167,36 @@ class TestDocumentsEndpoint:
         assert isinstance(response.json(), list)
 
     def test_search_phrase_returns_200(self, client):
-        response = client.get('/documents?search=%22tax+return%22')
+        response = client.get("/documents?search=%22tax+return%22")
         assert response.status_code == 200
         assert isinstance(response.json(), list)
 
     def test_search_mixed_phrase_and_bare_returns_200(self, client):
-        response = client.get('/documents?search=%22tax+return%22+2024')
+        response = client.get("/documents?search=%22tax+return%22+2024")
         assert response.status_code == 200
         assert isinstance(response.json(), list)
 
-    @pytest.mark.parametrize("q", [
-        '"unclosed',
-        '"',
-        'invoice*',
-        'inv* rec*',
-        '-invoice',
-        'price,discount',
-    ])
+    @pytest.mark.parametrize(
+        "q",
+        [
+            '"unclosed',
+            '"',
+            "invoice*",
+            "inv* rec*",
+            "-invoice",
+            "price,discount",
+        ],
+    )
     def test_search_crash_vectors_return_200(self, client, q):
         import urllib.parse
+
         response = client.get(f"/documents?search={urllib.parse.quote(q)}")
         assert response.status_code == 200
         assert isinstance(response.json(), list)
 
-    def test_search_all_operators_falls_back_to_all_docs(self, client, sample_pdf_bytes, mock_ollama_response):
+    def test_search_all_operators_falls_back_to_all_docs(
+        self, client, sample_pdf_bytes, mock_ollama_response
+    ):
         files = {"file": ("test.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")}
         client.post("/upload", files=files)
         response = client.get("/documents?search=:::")
@@ -198,7 +241,7 @@ class TestUpdateEndpoint:
         update_data = {
             "auto_filename": "updated_test.pdf",
             "category": "Receipt",
-            "tags": ["updated", "test"]
+            "tags": ["updated", "test"],
         }
         response = client.put(f"/document/{doc_id}", json=update_data)
         assert response.status_code == 200
@@ -217,7 +260,7 @@ class TestUpdateEndpoint:
         update_data = {
             "auto_filename": "test.pdf",
             "category": "Invoice",
-            "tags": ["test"]
+            "tags": ["test"],
         }
         response = client.put("/document/99999", json=update_data)
         assert response.status_code == 404
@@ -274,8 +317,9 @@ class TestBulkDownloadEndpoint:
     def test_download_multiple_documents(self, client, mock_ollama_response):
         """Test downloading multiple documents as a zip."""
         # Upload two different files
-        from pypdf import PdfWriter
         import io as io_module
+
+        from pypdf import PdfWriter
 
         # Create first PDF
         writer1 = PdfWriter()
@@ -302,7 +346,9 @@ class TestBulkDownloadEndpoint:
         doc_id2 = response2.json()["id"]
 
         # Download both
-        response = client.post("/download/multiple", json={"document_ids": [doc_id1, doc_id2]})
+        response = client.post(
+            "/download/multiple", json={"document_ids": [doc_id1, doc_id2]}
+        )
         assert response.status_code == 200
         assert "application/zip" in response.headers["content-type"]
 
@@ -313,7 +359,9 @@ class TestBulkDownloadEndpoint:
 
     def test_download_nonexistent_documents(self, client):
         """Test downloading documents that don't exist."""
-        response = client.post("/download/multiple", json={"document_ids": [99999, 99998]})
+        response = client.post(
+            "/download/multiple", json={"document_ids": [99999, 99998]}
+        )
         assert response.status_code == 404
 
 
@@ -323,8 +371,10 @@ class TestRestoreEndpoint:
     def test_restore_rejects_zip_slip(self, tmp_path, monkeypatch):
         """ZIP entries with path traversal sequences must be rejected."""
         import zipfile
-        import backend.main as main
+
         from fastapi.testclient import TestClient
+
+        import backend.main as main
         from backend.sync_service import SyncFolderService
 
         base_dir = tmp_path / "base"
@@ -368,8 +418,10 @@ class TestRestoreEndpoint:
     def test_restore_rejects_symlink_entry(self, tmp_path, monkeypatch):
         """ZIP entries that are symlinks must be rejected."""
         import zipfile
-        import backend.main as main
+
         from fastapi.testclient import TestClient
+
+        import backend.main as main
         from backend.sync_service import SyncFolderService
 
         base_dir = tmp_path / "base"
@@ -398,7 +450,7 @@ class TestRestoreEndpoint:
             zf.writestr("data/documents.db", b"SQLite format 3\x00" + b"\x00" * 84)
             info = zipfile.ZipInfo("uploads/link.pdf")
             info.external_attr = 0xA1FF << 16  # symlink with rwxrwxrwx permissions
-            zf.writestr(info, "/etc/passwd")   # symlink target stored as content
+            zf.writestr(info, "/etc/passwd")  # symlink target stored as content
         buf.seek(0)
 
         response = client.post(
@@ -412,8 +464,10 @@ class TestRestoreEndpoint:
     def test_restore_oversized_zip_rejected(self, tmp_path, monkeypatch):
         """ZIP files exceeding the size limit must be rejected with 413."""
         import zipfile
-        import backend.main as main
+
         from fastapi.testclient import TestClient
+
+        import backend.main as main
         from backend.sync_service import SyncFolderService
 
         base_dir = tmp_path / "base"
@@ -456,6 +510,7 @@ class TestSanitizeFtsQuery:
 
     def _fn(self):
         from backend.main import _sanitize_fts_query
+
         return _sanitize_fts_query
 
     def test_bare_word_gets_wildcard(self):
@@ -505,7 +560,7 @@ class TestSanitizeFtsQuery:
     def test_operator_only_no_wildcard(self):
         fn = self._fn()
         result = fn("AND OR NOT")
-        assert not result.endswith('*')
+        assert not result.endswith("*")
 
     def test_escaped_quote_inside_phrase(self):
         fn = self._fn()

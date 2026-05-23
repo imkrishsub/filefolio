@@ -107,6 +107,62 @@ class TestDuplicateDetection:
         assert response2.status_code == 409  # Conflict
 
 
+class TestDownloadSingle:
+    """Test GET /download/{doc_id}."""
+
+    def test_download_single_returns_pdf(self, client, sample_pdf_bytes, mock_ollama_response):
+        """Test that a valid document can be downloaded."""
+        files = {"file": ("report.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")}
+        doc_id = client.post("/upload", files=files).json()["id"]
+
+        response = client.get(f"/download/{doc_id}")
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/pdf"
+
+    def test_download_single_content_disposition_quoted(self, client, sample_pdf_bytes, mock_ollama_response):
+        """Content-Disposition filename must be percent-encoded (RFC 6266)."""
+        files = {"file": ("report.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")}
+        doc_id = client.post("/upload", files=files).json()["id"]
+
+        response = client.get(f"/download/{doc_id}")
+        disposition = response.headers.get("content-disposition", "")
+        # Value must use filename*= (RFC 5987) — not a bare unquoted filename=
+        assert "filename*=UTF-8''" in disposition
+
+    def test_download_single_injection_filename_is_safe(
+        self, client, db_connection, temp_test_dir, sample_pdf_bytes
+    ):
+        """A filename with header metacharacters must be percent-encoded, not passed raw."""
+        # Seed the DB directly to avoid multipart MIME pre-encoding the filename
+        injection_name = 'invoice"; type=text/html.pdf'
+        pdf_path = temp_test_dir / "uploads" / "injection_test.pdf"
+        pdf_path.write_bytes(sample_pdf_bytes)
+
+        cursor = db_connection.cursor()
+        cursor.execute(
+            """INSERT INTO documents
+               (original_filename, stored_filename, file_path, upload_date)
+               VALUES (?, ?, ?, ?)""",
+            (injection_name, "injection_test.pdf", str(pdf_path), "2026-05-23"),
+        )
+        db_connection.commit()
+        doc_id = cursor.lastrowid
+
+        response = client.get(f"/download/{doc_id}")
+        assert response.status_code == 200
+        disposition = response.headers.get("content-disposition", "")
+        # Raw double-quote and semicolon must not appear unencoded in the header
+        assert '"; type=text/html' not in disposition
+        # Both characters should be percent-encoded
+        assert "%22" in disposition
+        assert "%3B" in disposition or "%3b" in disposition
+
+    def test_download_single_not_found(self, client):
+        """Non-existent document should return 404."""
+        response = client.get("/download/999999")
+        assert response.status_code == 404
+
+
 class TestBulkOperations:
     """Test bulk document operations."""
 

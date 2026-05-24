@@ -142,3 +142,195 @@ class TestSyncFoldersAPI:
         """Test scanning nonexistent folder returns 404."""
         response = client.post("/sync-folders/99999/scan")
         assert response.status_code == 404
+
+    # --- Create edge cases ---
+
+    def test_create_sync_folder_path_is_file(self, client):
+        """Test creating sync folder where path points to a file returns 400."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = Path(tmpdir) / "not_a_dir.txt"
+            file_path.write_text("hello")
+            response = client.post(
+                "/sync-folders",
+                json={"source_path": str(file_path)}
+            )
+            assert response.status_code == 400
+            assert "not a directory" in response.json()["detail"]
+
+    def test_create_sync_folder_disabled(self, client):
+        """Test creating a sync folder with enabled=False stores it disabled."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            response = client.post(
+                "/sync-folders",
+                json={"source_path": tmpdir, "enabled": False, "move_after_processing": False}
+            )
+            assert response.status_code == 200
+            folder_id = response.json()["id"]
+
+            folders = client.get("/sync-folders").json()
+            folder = next(f for f in folders if f["id"] == folder_id)
+            assert folder["enabled"] is False
+
+    def test_create_sync_folder_move_after_processing(self, client):
+        """Test creating a sync folder with move_after_processing=True."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            response = client.post(
+                "/sync-folders",
+                json={"source_path": tmpdir, "enabled": True, "move_after_processing": True}
+            )
+            assert response.status_code == 200
+            folder_id = response.json()["id"]
+
+            folders = client.get("/sync-folders").json()
+            folder = next(f for f in folders if f["id"] == folder_id)
+            assert folder["move_after_processing"] is True
+
+    # --- GET response shape ---
+
+    def test_list_sync_folders_response_fields(self, client):
+        """Test that GET /sync-folders returns all expected fields with correct types."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            create = client.post(
+                "/sync-folders",
+                json={"source_path": tmpdir, "enabled": True, "move_after_processing": False}
+            )
+            folder_id = create.json()["id"]
+
+            folders = client.get("/sync-folders").json()
+            folder = next(f for f in folders if f["id"] == folder_id)
+
+            assert isinstance(folder["id"], int)
+            assert folder["source_path"] == tmpdir
+            assert isinstance(folder["enabled"], bool)
+            assert isinstance(folder["move_after_processing"], bool)
+            assert "created_date" in folder
+            assert "last_scan" in folder
+            assert "is_watching" in folder
+
+    def test_list_multiple_sync_folders(self, client):
+        """Test that GET /sync-folders returns all created folders."""
+        with tempfile.TemporaryDirectory() as dir1, \
+             tempfile.TemporaryDirectory() as dir2:
+            id1 = client.post("/sync-folders", json={"source_path": dir1}).json()["id"]
+            id2 = client.post("/sync-folders", json={"source_path": dir2}).json()["id"]
+
+            folder_ids = {f["id"] for f in client.get("/sync-folders").json()}
+            assert id1 in folder_ids
+            assert id2 in folder_ids
+
+    # --- Update edge cases ---
+
+    def test_update_move_after_processing(self, client):
+        """Test updating move_after_processing field."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            folder_id = client.post(
+                "/sync-folders",
+                json={"source_path": tmpdir, "enabled": True, "move_after_processing": False}
+            ).json()["id"]
+
+            response = client.put(
+                f"/sync-folders/{folder_id}",
+                json={"move_after_processing": True}
+            )
+            assert response.status_code == 200
+            assert response.json()["success"] is True
+
+            folder = next(
+                f for f in client.get("/sync-folders").json() if f["id"] == folder_id
+            )
+            assert folder["move_after_processing"] is True
+
+    def test_update_re_enable_folder(self, client):
+        """Test re-enabling a previously disabled sync folder."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            folder_id = client.post(
+                "/sync-folders",
+                json={"source_path": tmpdir, "enabled": False}
+            ).json()["id"]
+
+            client.put(f"/sync-folders/{folder_id}", json={"enabled": False})
+
+            response = client.put(f"/sync-folders/{folder_id}", json={"enabled": True})
+            assert response.status_code == 200
+
+            folder = next(
+                f for f in client.get("/sync-folders").json() if f["id"] == folder_id
+            )
+            assert folder["enabled"] is True
+
+    def test_update_both_fields(self, client):
+        """Test updating enabled and move_after_processing in a single PUT."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            folder_id = client.post(
+                "/sync-folders",
+                json={"source_path": tmpdir, "enabled": True, "move_after_processing": False}
+            ).json()["id"]
+
+            response = client.put(
+                f"/sync-folders/{folder_id}",
+                json={"enabled": False, "move_after_processing": True}
+            )
+            assert response.status_code == 200
+
+            folder = next(
+                f for f in client.get("/sync-folders").json() if f["id"] == folder_id
+            )
+            assert folder["enabled"] is False
+            assert folder["move_after_processing"] is True
+
+    def test_update_no_fields_is_noop(self, client):
+        """Test PUT with no fields set is a no-op and still returns success."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            folder_id = client.post(
+                "/sync-folders",
+                json={"source_path": tmpdir, "enabled": True, "move_after_processing": False}
+            ).json()["id"]
+
+            response = client.put(f"/sync-folders/{folder_id}", json={})
+            assert response.status_code == 200
+            assert response.json()["success"] is True
+
+            folder = next(
+                f for f in client.get("/sync-folders").json() if f["id"] == folder_id
+            )
+            assert folder["enabled"] is True
+            assert folder["move_after_processing"] is False
+
+    # --- Response body completeness ---
+
+    def test_scan_response_success_field(self, client):
+        """Test that scan response includes success: True."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            folder_id = client.post(
+                "/sync-folders", json={"source_path": tmpdir}
+            ).json()["id"]
+
+            response = client.post(f"/sync-folders/{folder_id}/scan")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert data["message"] == "Folder scan started"
+
+    def test_delete_response_fields(self, client):
+        """Test that delete response includes success and message."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            folder_id = client.post(
+                "/sync-folders", json={"source_path": tmpdir}
+            ).json()["id"]
+
+            response = client.delete(f"/sync-folders/{folder_id}")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert "message" in data
+
+    def test_update_response_message(self, client):
+        """Test that update response includes the expected message."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            folder_id = client.post(
+                "/sync-folders", json={"source_path": tmpdir}
+            ).json()["id"]
+
+            response = client.put(f"/sync-folders/{folder_id}", json={"enabled": False})
+            assert response.status_code == 200
+            assert response.json()["message"] == "Sync folder updated successfully"

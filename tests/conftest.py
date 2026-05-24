@@ -52,6 +52,9 @@ def test_db(temp_test_dir, monkeypatch):
     # Cleanup
     if db_path.exists():
         db_path.unlink()
+    for d in [temp_test_dir / "uploads", temp_test_dir / "thumbnails"]:
+        shutil.rmtree(d, ignore_errors=True)
+        d.mkdir(exist_ok=True)
 
 
 @pytest.fixture

@@ -33,6 +33,7 @@ import pytesseract
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from pdf2image import convert_from_path
 from PIL import Image
@@ -1288,7 +1289,7 @@ async def create_backup():
             temp_path,
             media_type="application/zip",
             filename=backup_filename,
-            background=cleanup_temp_file,
+            background=BackgroundTask(cleanup_temp_file),
         )
 
     except Exception as e:
@@ -1390,6 +1391,8 @@ async def restore_backup(file: UploadFile = File(...)):
 
     except zipfile.BadZipFile:
         raise HTTPException(status_code=400, detail="Invalid ZIP file")
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Restore error: {e}")
         # Try to restart sync service if it was stopped

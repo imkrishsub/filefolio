@@ -4,6 +4,8 @@ Updated to match actual API implementation.
 """
 
 import io
+import json
+import zipfile
 
 import pytest
 
@@ -565,3 +567,89 @@ class TestSanitizeFtsQuery:
     def test_escaped_quote_inside_phrase(self):
         fn = self._fn()
         assert fn('"say ""hello"" now"') == '"say ""hello"" now"'
+
+
+class TestBackupRestoreEndpoints:
+    """Tests for GET /backup and POST /restore endpoints."""
+
+    def test_backup_returns_valid_zip(self, client):
+        """GET /backup returns a ZIP containing the database and metadata."""
+        response = client.get("/backup")
+        assert response.status_code == 200
+        assert "application/zip" in response.headers["content-type"]
+        buf = io.BytesIO(response.content)
+        with zipfile.ZipFile(buf) as zf:
+            names = zf.namelist()
+        assert "data/documents.db" in names
+        assert "backup_metadata.json" in names
+
+    def test_backup_metadata_fields(self, client):
+        """backup_metadata.json inside the ZIP has the expected top-level keys."""
+        response = client.get("/backup")
+        assert response.status_code == 200
+        buf = io.BytesIO(response.content)
+        with zipfile.ZipFile(buf) as zf:
+            metadata = json.loads(zf.read("backup_metadata.json"))
+        assert "system" in metadata
+        assert "version" in metadata
+        assert "backup_date" in metadata
+
+    def test_restore_happy_path(self, client, tmp_path, monkeypatch):
+        """POST /restore with a valid backup ZIP returns success and correct stats."""
+        import backend.main as main
+
+        base_dir = tmp_path / "restore_base"
+        (base_dir / "data").mkdir(parents=True)
+        (base_dir / "uploads").mkdir()
+        (base_dir / "thumbnails").mkdir()
+        monkeypatch.setattr(main, "BASE_DIR", base_dir)
+        monkeypatch.setattr(main, "DATA_DIR", base_dir / "data")
+        monkeypatch.setattr(main, "DB_PATH", base_dir / "data" / "documents.db")
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr(
+                "data/documents.db",
+                b"SQLite format 3\x00" + b"\x00" * 84,
+            )
+            zf.writestr(
+                "backup_metadata.json",
+                json.dumps({
+                    "system": "FileFolio",
+                    "version": "1.0",
+                    "backup_date": "2026-01-01T00:00:00",
+                }),
+            )
+        buf.seek(0)
+
+        response = client.post(
+            "/restore",
+            files={"file": ("backup.zip", buf, "application/zip")},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["stats"]["pdfs_restored"] == 0
+        assert data["stats"]["thumbnails_restored"] == 0
+
+    def test_restore_missing_database_entry(self, client):
+        """POST /restore with a ZIP that lacks data/documents.db returns 400."""
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("backup_metadata.json", json.dumps({"system": "FileFolio"}))
+        buf.seek(0)
+
+        response = client.post(
+            "/restore",
+            files={"file": ("backup.zip", buf, "application/zip")},
+        )
+        assert response.status_code == 400
+        assert "missing database" in response.json()["detail"].lower()
+
+    def test_restore_non_zip_file(self, client):
+        """POST /restore with a non-ZIP file returns 400."""
+        response = client.post(
+            "/restore",
+            files={"file": ("notes.txt", io.BytesIO(b"not a zip"), "text/plain")},
+        )
+        assert response.status_code == 400

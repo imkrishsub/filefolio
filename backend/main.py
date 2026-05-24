@@ -32,7 +32,7 @@ import ollama
 import pypdf
 import pytesseract
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pdf2image import convert_from_path
@@ -1295,7 +1295,7 @@ async def scan_sync_folder(folder_id: int):
 
 
 @app.get("/backup")
-async def create_backup():
+async def create_backup(background_tasks: BackgroundTasks):
     """
     Create a complete backup of the system.
 
@@ -1347,11 +1347,11 @@ async def create_backup():
             except Exception as e:
                 print(f"Error cleaning up temp file: {e}")
 
+        background_tasks.add_task(cleanup_temp_file)
         return FileResponse(
             temp_path,
             media_type="application/zip",
             filename=backup_filename,
-            background=cleanup_temp_file,
         )
 
     except Exception as e:

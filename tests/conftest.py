@@ -4,54 +4,34 @@ Pytest configuration and shared fixtures for FileFolio tests.
 
 import pytest
 import sqlite3
-import tempfile
-import shutil
-from pathlib import Path
+import io
 from fastapi.testclient import TestClient
 from PIL import Image
-import io
 from pypdf import PdfWriter
 
 
-@pytest.fixture(scope="session")
-def temp_test_dir():
-    """Create a temporary directory for all tests."""
-    temp_dir = Path(tempfile.mkdtemp(prefix="filefolio_test_"))
-    yield temp_dir
-    shutil.rmtree(temp_dir)
-
-
 @pytest.fixture
-def test_db(temp_test_dir, monkeypatch):
-    """Create a temporary test database."""
-    db_path = temp_test_dir / "test_documents.db"
+def test_db(tmp_path, monkeypatch):
+    """Create an isolated database and upload/thumbnail directories per test."""
+    db_path = tmp_path / "documents.db"
+    upload_dir = tmp_path / "uploads"
+    thumbnails_dir = tmp_path / "thumbnails"
 
-    # Patch the database path in the main module
+    upload_dir.mkdir(exist_ok=True)
+    thumbnails_dir.mkdir(exist_ok=True)
+
     import backend.main as main
     monkeypatch.setattr(main, "DB_PATH", db_path)
-    monkeypatch.setattr(main, "UPLOAD_DIR", temp_test_dir / "uploads")
-    monkeypatch.setattr(main, "THUMBNAILS_DIR", temp_test_dir / "thumbnails")
+    monkeypatch.setattr(main, "UPLOAD_DIR", upload_dir)
+    monkeypatch.setattr(main, "THUMBNAILS_DIR", thumbnails_dir)
 
-    # Create directories
-    (temp_test_dir / "uploads").mkdir(exist_ok=True)
-    (temp_test_dir / "thumbnails").mkdir(exist_ok=True)
-
-    # Initialize database
     main.init_db()
 
-    # Reinitialize sync service with test paths
     from backend.sync_service import SyncFolderService
-    main.sync_service = SyncFolderService(
-        db_path,
-        temp_test_dir / "uploads",
-        temp_test_dir / "thumbnails"
-    )
+    main.sync_service = SyncFolderService(db_path, upload_dir, thumbnails_dir)
 
     yield db_path
-
-    # Cleanup
-    if db_path.exists():
-        db_path.unlink()
+    # tmp_path is cleaned up automatically by pytest after the test
 
 
 @pytest.fixture
@@ -75,13 +55,11 @@ def sample_pdf_bytes():
 
 
 @pytest.fixture
-def sample_pdf_file(temp_test_dir, sample_pdf_bytes):
+def sample_pdf_file(tmp_path, sample_pdf_bytes):
     """Create a sample PDF file on disk."""
-    pdf_path = temp_test_dir / "test_document.pdf"
+    pdf_path = tmp_path / "test_document.pdf"
     pdf_path.write_bytes(sample_pdf_bytes)
-    yield pdf_path
-    if pdf_path.exists():
-        pdf_path.unlink()
+    return pdf_path  # tmp_path cleanup handles removal
 
 
 @pytest.fixture

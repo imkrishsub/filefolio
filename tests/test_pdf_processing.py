@@ -22,13 +22,13 @@ class TestPDFTextExtraction:
         text = reader.pages[0].extract_text()
         assert isinstance(text, str)
 
-    def test_handle_empty_pdf(self, temp_test_dir):
+    def test_handle_empty_pdf(self, tmp_path):
         """Test handling PDF with no content."""
         # Create empty PDF
         writer = PdfWriter()
         writer.add_blank_page(width=100, height=100)
 
-        empty_pdf = temp_test_dir / "empty.pdf"
+        empty_pdf = tmp_path / "empty.pdf"
         with open(empty_pdf, "wb") as f:
             writer.write(f)
 
@@ -37,14 +37,14 @@ class TestPDFTextExtraction:
         text = reader.pages[0].extract_text()
         assert isinstance(text, str)
 
-    def test_handle_multipage_pdf(self, temp_test_dir):
+    def test_handle_multipage_pdf(self, tmp_path):
         """Test extracting text from multipage PDF."""
         # Create multipage PDF
         writer = PdfWriter()
         for i in range(5):
             writer.add_blank_page(width=200, height=200)
 
-        multipage_pdf = temp_test_dir / "multipage.pdf"
+        multipage_pdf = tmp_path / "multipage.pdf"
         with open(multipage_pdf, "wb") as f:
             writer.write(f)
 
@@ -139,12 +139,12 @@ class TestPDFMetadataExtraction:
         metadata = reader.metadata
         assert metadata is not None or metadata is None  # Some PDFs have no metadata
 
-    def test_handle_pdf_without_metadata(self, temp_test_dir):
+    def test_handle_pdf_without_metadata(self, tmp_path):
         """Test handling PDFs with no metadata."""
         writer = PdfWriter()
         writer.add_blank_page(width=200, height=200)
 
-        pdf_path = temp_test_dir / "no_metadata.pdf"
+        pdf_path = tmp_path / "no_metadata.pdf"
         with open(pdf_path, "wb") as f:
             writer.write(f)
 

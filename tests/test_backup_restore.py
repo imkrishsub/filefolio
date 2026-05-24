@@ -118,9 +118,9 @@ class TestRestoreEndpoint:
         """Patch BASE_DIR and DATA_DIR so restore extracts into an isolated temp dir."""
         import backend.main as main
 
-        (tmp_path / "data").mkdir()
-        (tmp_path / "uploads").mkdir()
-        (tmp_path / "thumbnails").mkdir()
+        (tmp_path / "data").mkdir(exist_ok=True)
+        (tmp_path / "uploads").mkdir(exist_ok=True)
+        (tmp_path / "thumbnails").mkdir(exist_ok=True)
 
         monkeypatch.setattr(main, "BASE_DIR", tmp_path)
         monkeypatch.setattr(main, "DATA_DIR", tmp_path / "data")

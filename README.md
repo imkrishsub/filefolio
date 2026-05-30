@@ -16,6 +16,19 @@ FileFolio helps privacy-conscious professionals keep large PDF collections searc
 
 FileFolio watches a folder, uses a local LLM via Ollama to analyze each PDF, and keeps everything searchable in one interface.
 
+## FileFolio vs Paperless-ngx
+
+Paperless-ngx is the most popular self-hosted alternative. Here's how they compare:
+
+| Feature | FileFolio | Paperless-ngx |
+|---|---|---|
+| AI tagging and naming | 🟢 Local LLM via Ollama, zero config | 🔴 ML classifier available, but requires manual training; no LLM-level understanding |
+| Setup | 🟢 Single Python process + SQLite | 🔴 Docker Compose: web, worker, Redis, PostgreSQL |
+| Resource footprint | 🟢 Single process + Ollama | 🔴 Multi-service, heavier |
+| Multi-user | 🔴 No | 🟢 Yes |
+| Feature scope | 🔴 Focused: upload, search, tag, organize | 🟢 Broader: email ingestion, custom fields, workflow automation |
+| Best for | 🟢 Personal libraries, privacy-first, low setup | 🟢 Power users, teams, complex workflows |
+
 ## Features
 
 - **Automatic organization** – watches a folder and imports new PDFs, extracting text (with OCR), then generating categories and tags

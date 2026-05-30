@@ -53,3 +53,6 @@ frontend/static/style.css.backup
 
 # Claude Code
 .claude/
+
+# Superpowers working files (specs, plans) — local only
+docs/superpowers/

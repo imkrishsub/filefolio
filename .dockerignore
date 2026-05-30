@@ -2,9 +2,9 @@
 .github
 .claude
 .pytest_cache
-__pycache__
-*.pyc
-*.pyo
+**/__pycache__
+**/*.pyc
+**/*.pyo
 uploads/
 data/
 thumbnails/

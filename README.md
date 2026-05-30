@@ -53,6 +53,31 @@ Paperless-ngx is the most popular self-hosted alternative. Here's how they compa
 
 ## Quick start
 
+### Docker (recommended)
+
+1. **Clone the repository**
+```bash
+git clone https://github.com/imkrishsub/filefolio.git
+cd filefolio
+```
+
+2. **Start Ollama** (if not already running)
+```bash
+ollama serve
+```
+
+3. **Start FileFolio**
+```bash
+docker compose up
+```
+
+4. **Open your browser**
+Navigate to: http://localhost:8000
+
+Ollama runs on your host machine; the container connects to it automatically via `host.docker.internal`. On Linux, set `OLLAMA_HOST=http://172.17.0.1:11434` if `host.docker.internal` is not available.
+
+### Manual setup
+
 1. **Clone the repository**
 ```bash
 git clone https://github.com/imkrishsub/filefolio.git
@@ -91,6 +116,14 @@ Set a custom port using the `PORT` environment variable:
 
 ```bash
 PORT=8080 python backend/main.py
+# or with Docker:
+PORT=8080 docker compose up
+```
+
+### Custom Ollama URL
+
+```bash
+OLLAMA_HOST=http://192.168.1.10:11434 docker compose up
 ```
 
 ## Testing

@@ -100,17 +100,19 @@
   - Priority: low
   - Notes: TestDownloadSingle class added to tests/test_basic.py during the Content-Disposition security fix. Four tests: happy path, RFC 6266 encoding, injection safety, 404.
 
-- [ ] Fix vacuous FTS search assertion in `test_search_documents`
+- [x] Fix vacuous FTS search assertion in `test_search_documents`
   - ID: T016
   - Date added: 2026-05-23
+  - Date completed: 2026-05-31
   - Priority: low
-  - Notes: The test comment says "may return empty if FTS doesn't match, that's OK" — the assertion never actually verifies FTS behaviour. Fix to assert a known document is returned.
+  - Notes: Replaced isinstance(data, list) with len(data)==1 and filename check. Added test_search_no_match_returns_empty to verify FTS returns empty for non-matching terms.
 
-- [ ] Fix `test_download_multiple` in `test_basic.py`
+- [x] Fix `test_download_multiple` in `test_basic.py`
   - ID: T017
   - Date added: 2026-05-23
+  - Date completed: 2026-05-31
   - Priority: low
-  - Notes: Silently skips the download assertion if only one unique doc was uploaded (due to duplicate detection); would pass with 0 documents downloaded.
+  - Notes: Deleted TestBulkOperations class from test_basic.py. Coverage is provided by TestBulkDownloadEndpoint in test_api.py, which uses two distinct PDFs and verifies zip content-type, 400 on empty list, and 404 on missing docs.
 
 ### Polish & Production
 - [ ] Add error handling and validation improvements

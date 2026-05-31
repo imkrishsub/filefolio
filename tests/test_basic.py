@@ -161,22 +161,3 @@ class TestDownloadSingle:
         """Non-existent document should return 404."""
         response = client.get("/download/999999")
         assert response.status_code == 404
-
-
-class TestBulkOperations:
-    """Test bulk document operations."""
-
-    def test_download_multiple(self, client, sample_pdf_bytes, mock_ollama_response):
-        """Test downloading multiple documents as zip."""
-        # Upload two documents
-        doc_ids = []
-        for i in range(2):
-            files = {"file": (f"test{i}.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")}
-            response = client.post("/upload", files=files)
-            if response.status_code == 200:
-                doc_ids.append(response.json()["id"])
-
-        # Download as zip
-        if doc_ids:
-            download_response = client.post("/download/multiple", json={"document_ids": doc_ids})
-            assert download_response.status_code == 200

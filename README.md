@@ -31,12 +31,10 @@ Paperless-ngx is the most popular self-hosted alternative. Here's how they compa
 
 ## Features
 
-- **Automatic organization** – watches a folder and imports new PDFs, extracting text (with OCR), then generating categories and tags
-- **Privacy-first** – all processing happens locally with Ollama, no cloud services, no telemetry or analytics
-- **Fast retrieval** – full-text search across content and metadata, plus thumbnail previews
-- **Disaster-proof** – backup and restore your entire library via ZIP
-- **Multi-language support** – UI available in multiple languages
-- **Dark mode** – toggle between light and dark themes
+- **Automatic organization** – drop a PDF in a watched folder; Ollama names, tags, and categorizes it
+- **Privacy-first** – every byte stays on your machine, no cloud calls, no telemetry
+- **Fast retrieval** – full-text search across content and metadata with thumbnail previews
+- **Disaster-proof** – back up and restore your entire library as a single ZIP
 
 ## Prerequisites
 

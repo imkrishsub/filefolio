@@ -139,19 +139,26 @@ class TestDocumentsEndpoint:
         assert data[0]["original_filename"] == "test.pdf"
 
     def test_search_documents(self, client, sample_pdf_bytes, mock_ollama_response):
-        """Test searching documents by query."""
-        # Upload a file
+        """FTS search by filename returns the matching document."""
         files = {
             "file": ("invoice.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")
         }
         client.post("/upload", files=files)
 
-        # Search for the document
         response = client.get("/documents?search=invoice")
         assert response.status_code == 200
-        # May return empty if FTS doesn't match, that's OK
         data = response.json()
-        assert isinstance(data, list)
+        assert len(data) == 1
+        assert data[0]["original_filename"] == "invoice.pdf"
+
+    def test_search_no_match_returns_empty(self, client, sample_pdf_bytes, mock_ollama_response):
+        """FTS search with a non-matching term returns an empty list."""
+        files = {"file": ("invoice.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")}
+        client.post("/upload", files=files)
+
+        response = client.get("/documents?search=xyznotfound")
+        assert response.status_code == 200
+        assert response.json() == []
 
     def test_search_column_filter_returns_200(self, client):
         response = client.get("/documents?search=original_filename%3Asecret")

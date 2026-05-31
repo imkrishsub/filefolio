@@ -2,9 +2,11 @@
 Tests for sync folder functionality.
 """
 
+import inspect
 import pytest
 from pathlib import Path
 from backend.main import app
+from backend.sync_service import PDFHandler, SyncFolderService
 import tempfile
 import shutil
 
@@ -334,3 +336,48 @@ class TestSyncFoldersAPI:
             response = client.put(f"/sync-folders/{folder_id}", json={"enabled": False})
             assert response.status_code == 200
             assert response.json()["message"] == "Sync folder updated successfully"
+
+
+class TestSyncServiceNotCoroutine:
+    """
+    T009: _process_pdf and _process_file must be plain callables, not coroutines.
+    asyncio.run() from watchdog/background threads creates a new event loop per call
+    and raises RuntimeError if ever called from within an existing event loop.
+    Since both functions do purely synchronous I/O, there is no need for async at all.
+    """
+
+    def test_process_pdf_is_not_a_coroutine(self):
+        """SyncFolderService._process_pdf must be a regular function."""
+        assert not inspect.iscoroutinefunction(SyncFolderService._process_pdf)
+
+    def test_process_file_is_not_a_coroutine(self):
+        """PDFHandler._process_file must be a regular function."""
+        assert not inspect.iscoroutinefunction(PDFHandler._process_file)
+
+    def test_scan_folder_callable_without_event_loop(self, tmp_path):
+        """scan_folder must be callable from a context with no running event loop."""
+        import asyncio
+        import threading
+
+        svc = SyncFolderService(
+            db_path=tmp_path / "test.db",
+            upload_dir=tmp_path / "uploads",
+            thumbnails_dir=tmp_path / "thumbnails",
+        )
+        (tmp_path / "uploads").mkdir()
+        (tmp_path / "thumbnails").mkdir()
+
+        # Calling scan_folder on a folder that doesn't exist in DB is a no-op,
+        # but must NOT raise RuntimeError about event loops.
+        raised = []
+
+        def run():
+            try:
+                svc.scan_folder(9999)
+            except RuntimeError as e:
+                raised.append(e)
+
+        t = threading.Thread(target=run)
+        t.start()
+        t.join(timeout=5)
+        assert not raised, f"scan_folder raised RuntimeError: {raised[0]}"

@@ -5,7 +5,6 @@ Watches configured folders for new PDF files and automatically processes them
 using the existing document processing pipeline.
 """
 
-import asyncio
 import hashlib
 import json
 import logging
@@ -40,7 +39,7 @@ class PDFHandler(FileSystemEventHandler):
         Args:
             folder_id: Database ID of the sync folder
             source_path: Path to the watched folder
-            process_callback: Async function to process PDF files
+            process_callback: Function to process PDF files
             move_after: Whether to move files after processing
         """
         self.folder_id = folder_id
@@ -76,8 +75,7 @@ class PDFHandler(FileSystemEventHandler):
         self.processing.add(str(file_path))
 
         try:
-            # Process the file
-            asyncio.run(self._process_file(file_path))
+            self._process_file(file_path)
         finally:
             self.processing.discard(str(file_path))
 
@@ -108,7 +106,7 @@ class PDFHandler(FileSystemEventHandler):
 
         return False
 
-    async def _process_file(self, file_path: Path):
+    def _process_file(self, file_path: Path):
         """
         Process a PDF file using the callback.
 
@@ -116,7 +114,7 @@ class PDFHandler(FileSystemEventHandler):
             file_path: Path to the PDF file
         """
         try:
-            success = await self.process_callback(file_path, self.folder_id)
+            success = self.process_callback(file_path, self.folder_id)
 
             if success and self.move_after:
                 # Move file to processed folder
@@ -356,7 +354,7 @@ class SyncFolderService:
         conn.commit()
         conn.close()
 
-    async def _process_pdf(self, file_path: Path, folder_id: int) -> bool:
+    def _process_pdf(self, file_path: Path, folder_id: int) -> bool:
         """
         Process a PDF file from a sync folder.
 
@@ -525,7 +523,7 @@ class SyncFolderService:
         processed = 0
         for pdf_file in pdf_files:
             try:
-                success = asyncio.run(self._process_pdf(pdf_file, folder_id))
+                success = self._process_pdf(pdf_file, folder_id)
                 if success:
                     processed += 1
             except Exception as e:

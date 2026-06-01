@@ -5,7 +5,9 @@ Updated to match actual API implementation.
 
 import io
 import json
+import sqlite3
 import zipfile
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -660,3 +662,80 @@ class TestBackupRestoreEndpoints:
             files={"file": ("notes.txt", io.BytesIO(b"not a zip"), "text/plain")},
         )
         assert response.status_code == 400
+
+
+class TestDuplicateDetectionRace:
+    """
+    T010: The pre-check SELECT and the INSERT are in separate transactions.
+    A UNIQUE constraint on file_hash (with IntegrityError catch at INSERT) is
+    the correct fix — the pre-check is a fast early-exit, not a safety net.
+    """
+
+    def test_file_hash_unique_constraint(self, db_connection):
+        """Inserting two rows with the same non-null file_hash must raise IntegrityError."""
+        now = "2026-01-01T00:00:00"
+        db_connection.execute(
+            "INSERT INTO documents "
+            "(original_filename, stored_filename, file_path, upload_date, file_hash) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("a.pdf", "a.pdf", "/a.pdf", now, "deadbeef1234"),
+        )
+        db_connection.commit()
+        with pytest.raises(sqlite3.IntegrityError):
+            db_connection.execute(
+                "INSERT INTO documents "
+                "(original_filename, stored_filename, file_path, upload_date, file_hash) "
+                "VALUES (?, ?, ?, ?, ?)",
+                ("b.pdf", "b.pdf", "/b.pdf", now, "deadbeef1234"),  # same hash
+            )
+            db_connection.commit()
+
+    def test_null_file_hash_not_constrained(self, db_connection):
+        """Two rows with NULL file_hash must not conflict (partial index semantics)."""
+        now = "2026-01-01T00:00:00"
+        db_connection.execute(
+            "INSERT INTO documents "
+            "(original_filename, stored_filename, file_path, upload_date, file_hash) "
+            "VALUES (?, ?, ?, ?, NULL)",
+            ("c.pdf", "c.pdf", "/c.pdf", now),
+        )
+        db_connection.execute(
+            "INSERT INTO documents "
+            "(original_filename, stored_filename, file_path, upload_date, file_hash) "
+            "VALUES (?, ?, ?, ?, NULL)",
+            ("d.pdf", "d.pdf", "/d.pdf", now),
+        )
+        db_connection.commit()  # must not raise
+
+    def test_upload_race_condition_returns_409(
+        self, client, sample_pdf_bytes, monkeypatch, mock_ollama_response
+    ):
+        """When the dedup pre-check is bypassed by a race, IntegrityError at INSERT
+        must return 409, not 500."""
+        import backend.main as main
+
+        # First upload seeds the DB with the hash.
+        files = {"file": ("race.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")}
+        r1 = client.post("/upload", files=files)
+        assert r1.status_code == 200
+
+        # Simulate the race window: the first call to get_db_connection (the pre-check)
+        # returns a mock whose cursor.fetchone() reports no duplicate, so the upload
+        # proceeds past the check and hits the UNIQUE constraint at INSERT.
+        real_get_db = main.get_db_connection
+        call_number = [0]
+
+        def patched_get_db():
+            call_number[0] += 1
+            if call_number[0] == 1:
+                mock_conn = MagicMock()
+                mock_conn.cursor.return_value.fetchone.return_value = None
+                return mock_conn
+            return real_get_db()
+
+        monkeypatch.setattr(main, "get_db_connection", patched_get_db)
+
+        files = {"file": ("race.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")}
+        r2 = client.post("/upload", files=files)
+        assert r2.status_code == 409
+        assert "Duplicate file detected" in r2.json()["detail"]

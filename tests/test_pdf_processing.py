@@ -64,6 +64,39 @@ class TestThumbnailGeneration:
         assert len(images) == 1
         assert isinstance(images[0], Image.Image)
 
+    def test_thumbnail_filename_uses_path_suffix(self):
+        """generate_thumbnail derives the JPEG name via Path.with_suffix, not str.replace.
+
+        A stored filename containing '.pdf' in its stem (e.g. a timestamp prefix
+        that is itself valid) must not be mangled — only the final extension
+        should change to '.jpg'.
+        """
+        from pathlib import Path
+        import backend.main as main
+
+        # Simulate a stored filename whose stem happens to contain ".pdf" — edge case
+        # that str.replace(".pdf", ".jpg") would mangle.
+        stored = "20240101_120000_my.pdf.report.pdf"
+        expected = "20240101_120000_my.pdf.report.jpg"
+
+        result = Path(stored).with_suffix(".jpg").name
+        assert result == expected, f"Expected {expected!r}, got {result!r}"
+
+        # Verify the production code itself also produces the correct name.
+        # We monkeypatch THUMBNAILS_DIR and convert_from_path so no real I/O happens.
+        from unittest.mock import patch, MagicMock
+        from PIL import Image as PILImage
+        import tempfile, os
+
+        fake_img = MagicMock(spec=PILImage.Image)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(main, "THUMBNAILS_DIR", Path(tmp)), \
+                 patch("backend.main.convert_from_path", return_value=[fake_img]):
+                url = main.generate_thumbnail(Path(tmp) / stored, stored)
+
+        assert url == f"/thumbnails/{expected}", f"Unexpected URL: {url}"
+
     def test_thumbnail_resize(self, sample_image):
         """Test resizing thumbnail to standard size."""
         img = Image.open(io.BytesIO(sample_image))

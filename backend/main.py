@@ -568,7 +568,7 @@ def generate_thumbnail(pdf_path: Path, stored_filename: str):
             img.thumbnail((300, 400), Image.Resampling.LANCZOS)
 
             # Save as JPEG
-            thumbnail_filename = stored_filename.replace(".pdf", ".jpg")
+            thumbnail_filename = Path(stored_filename).with_suffix(".jpg").name
             thumbnail_path = THUMBNAILS_DIR / thumbnail_filename
             img.save(thumbnail_path, "JPEG", quality=85)
 

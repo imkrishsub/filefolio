@@ -91,11 +91,12 @@
   - Priority: low
   - Notes: Replaced `stored_filename.replace(".pdf", ".jpg")` with `Path(stored_filename).with_suffix(".jpg").name`. Added test_thumbnail_filename_uses_path_suffix which reproduces the stem-mangling bug and verifies the fix.
 
-- [ ] Add typed Pydantic model for `update_document` request body
+- [x] Add typed Pydantic model for `update_document` request body
   - ID: T014
   - Date added: 2026-05-23
+  - Date completed: 2026-06-01
   - Priority: low
-  - Notes: `updates: dict` skips schema validation; `tags` could be sent as an integer and stored as `json.dumps(5)`, breaking downstream parsing. Replace with a typed `UpdateRequest` model.
+  - Notes: Replaced `updates: dict` with `UpdateRequest(BaseModel)` with typed fields: `auto_filename: Optional[str]`, `tags: Optional[List[str]]`, `category: Optional[ValidCategory]`. FastAPI now returns 422 for invalid payloads. Three new tests cover rejection of integer tags, invalid category, and non-string filename.
 
 ### Test gaps
 - [x] Add test for `GET /download/{doc_id}`

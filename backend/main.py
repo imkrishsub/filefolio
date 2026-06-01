@@ -421,12 +421,14 @@ async def upload_pdf(file: UploadFile = File(...)):
 
     Returns: Document metadata including suggested tags and category
     """
-    if not file.filename.lower().endswith(".pdf"):
+    # Strip any directory components from the browser-supplied filename
+    safe_filename = Path(file.filename).name
+    if not safe_filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 
     # Save file temporarily
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    stored_filename = f"{timestamp}_{file.filename}"
+    stored_filename = f"{timestamp}_{safe_filename}"
     file_path = UPLOAD_DIR / stored_filename
 
     # Stream to disk, enforcing size limit and calculating SHA-256 hash in one pass
@@ -534,7 +536,7 @@ async def upload_pdf(file: UploadFile = File(...)):
     thumbnail_path = generate_thumbnail(file_path, stored_filename)
 
     # Process document for AI tagging (but don't rename)
-    tags, category = process_document(text_preview, file.filename)
+    tags, category = process_document(text_preview, safe_filename)
 
     # Save to database
     conn = get_db_connection()
@@ -548,7 +550,7 @@ async def upload_pdf(file: UploadFile = File(...)):
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
             (
-                file.filename,
+                safe_filename,
                 stored_filename,
                 None,  # No auto-renaming
                 str(file_path),
@@ -589,7 +591,7 @@ async def upload_pdf(file: UploadFile = File(...)):
 
     return {
         "id": doc_id,
-        "original_filename": file.filename,
+        "original_filename": safe_filename,
         "auto_filename": None,
         "tags": tags,
         "category": category,

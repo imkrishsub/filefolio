@@ -134,6 +134,18 @@ class TestUploadEndpoint:
         assert response.status_code == 400
         assert "corrupt" in response.json()["detail"].lower() or "invalid" in response.json()["detail"].lower()
 
+    def test_upload_strips_path_from_original_filename(self, client, sample_pdf_bytes, mock_ollama_response):
+        """Filenames containing directory separators should be stored as basename only."""
+        response = client.post(
+            "/upload",
+            files={"file": ("../../evil/secret.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")},
+        )
+        assert response.status_code == 200
+        stored_name = response.json()["original_filename"]
+        assert "/" not in stored_name
+        assert "\\" not in stored_name
+        assert stored_name == "secret.pdf"
+
 
 class TestDocumentsEndpoint:
     """Tests for the /documents endpoint."""

@@ -84,11 +84,12 @@
   - Priority: medium
   - Notes: Replaced `zip_file.write(DB_PATH)` with `sqlite3.connect().backup()` for a consistent online snapshot safe under WAL. Added test_backup_database_is_valid_sqlite verifying the ZIP entry is a readable SQLite file with the expected schema.
 
-- [ ] Fix thumbnail filename derivation
+- [x] Fix thumbnail filename derivation
   - ID: T013
   - Date added: 2026-05-23
+  - Date completed: 2026-06-01
   - Priority: low
-  - Notes: `stored_filename.replace(".pdf", ".jpg")` is fragile. Use `Path(stored_filename).with_suffix(".jpg")` instead.
+  - Notes: Replaced `stored_filename.replace(".pdf", ".jpg")` with `Path(stored_filename).with_suffix(".jpg").name`. Added test_thumbnail_filename_uses_path_suffix which reproduces the stem-mangling bug and verifies the fix.
 
 - [ ] Add typed Pydantic model for `update_document` request body
   - ID: T014

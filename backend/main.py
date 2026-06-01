@@ -422,7 +422,10 @@ async def upload_pdf(file: UploadFile = File(...)):
     Returns: Document metadata including suggested tags and category
     """
     # Strip any directory components from the browser-supplied filename
-    safe_filename = Path(file.filename).name
+    raw_filename = file.filename or ""
+    safe_filename = Path(raw_filename.replace("\\", "/")).name
+    if not safe_filename or "\x00" in safe_filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
     if not safe_filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 

@@ -7,8 +7,9 @@ import io
 import json
 import sqlite3
 import zipfile
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
+import pypdf
 import pytest
 
 
@@ -155,6 +156,26 @@ class TestUploadEndpoint:
         assert "/" not in stored_name
         assert "\\" not in stored_name
         assert stored_name == "secret.pdf"
+
+    def test_upload_password_protected_pdf_returns_400(self, client, sample_pdf_bytes):
+        """An encrypted PDF should be rejected with a 400 and a clear message."""
+        with patch("backend.main.pypdf.PdfReader") as mock_reader:
+            mock_reader.side_effect = pypdf.errors.FileNotDecryptedError
+            response = client.post(
+                "/upload",
+                files={"file": ("locked.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")},
+            )
+        assert response.status_code == 400
+        assert "password" in response.json()["detail"].lower()
+
+    @pytest.mark.parametrize("bad_name", ["\x00.pdf", "legit\x00.pdf"])
+    def test_upload_invalid_filename_returns_400(self, client, bad_name):
+        """Filenames with null bytes should be rejected with 400."""
+        response = client.post(
+            "/upload",
+            files={"file": (bad_name, io.BytesIO(b"%PDF-1.4"), "application/pdf")},
+        )
+        assert response.status_code == 400
 
 
 class TestDocumentsEndpoint:

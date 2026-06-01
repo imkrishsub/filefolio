@@ -26,7 +26,7 @@ import urllib.parse
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 import ollama
 import pypdf
@@ -370,6 +370,33 @@ def reindex_documents_content():
 # Mount static files
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR / "static"), name="static")
 app.mount("/thumbnails", StaticFiles(directory=THUMBNAILS_DIR), name="thumbnails")
+
+
+# ── Request / response models ────────────────────────────────────────────────
+
+ValidCategory = Literal[
+    "Invoice",
+    "Receipt",
+    "Contract",
+    "Letter",
+    "Report",
+    "Form",
+    "Statement",
+    "Legal",
+    "Medical",
+    "Tax",
+    "Insurance",
+    "Other",
+]
+
+
+class UpdateRequest(BaseModel):
+    auto_filename: Optional[str] = None
+    tags: Optional[List[str]] = None
+    category: Optional[ValidCategory] = None
+
+
+# ── Routes ───────────────────────────────────────────────────────────────────
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1060,7 +1087,7 @@ async def download_single_document(doc_id: int):
 
 
 @app.put("/document/{doc_id}")
-async def update_document(doc_id: int, updates: dict):
+async def update_document(doc_id: int, updates: UpdateRequest):
     """Update document metadata (filename, tags, category)."""
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -1076,17 +1103,17 @@ async def update_document(doc_id: int, updates: dict):
     update_fields = []
     params = []
 
-    if "auto_filename" in updates:
+    if updates.auto_filename is not None:
         update_fields.append("auto_filename = ?")
-        params.append(updates["auto_filename"])
+        params.append(updates.auto_filename)
 
-    if "tags" in updates:
+    if updates.tags is not None:
         update_fields.append("tags = ?")
-        params.append(json.dumps(updates["tags"]))
+        params.append(json.dumps(updates.tags))
 
-    if "category" in updates:
+    if updates.category is not None:
         update_fields.append("category = ?")
-        params.append(updates["category"])
+        params.append(updates.category)
 
     if not update_fields:
         conn.close()

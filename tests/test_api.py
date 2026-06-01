@@ -276,6 +276,30 @@ class TestUpdateEndpoint:
         response = client.put("/document/99999", json=update_data)
         assert response.status_code == 404
 
+    def test_update_rejects_tags_as_integer(self, client, sample_pdf_bytes, mock_ollama_response):
+        """PUT /document/{id} returns 422 when tags is sent as an integer, not a list."""
+        files = {"file": ("test.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")}
+        doc_id = client.post("/upload", files=files).json()["id"]
+
+        response = client.put(f"/document/{doc_id}", json={"tags": 5})
+        assert response.status_code == 422
+
+    def test_update_rejects_invalid_category(self, client, sample_pdf_bytes, mock_ollama_response):
+        """PUT /document/{id} returns 422 when category is not one of the valid enum values."""
+        files = {"file": ("test.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")}
+        doc_id = client.post("/upload", files=files).json()["id"]
+
+        response = client.put(f"/document/{doc_id}", json={"category": "NotACategory"})
+        assert response.status_code == 422
+
+    def test_update_rejects_auto_filename_as_non_string(self, client, sample_pdf_bytes, mock_ollama_response):
+        """PUT /document/{id} returns 422 when auto_filename is not a string."""
+        files = {"file": ("test.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")}
+        doc_id = client.post("/upload", files=files).json()["id"]
+
+        response = client.put(f"/document/{doc_id}", json={"auto_filename": 42})
+        assert response.status_code == 422
+
 
 class TestDeleteEndpoint:
     """Tests for the DELETE /document/{id} endpoint."""

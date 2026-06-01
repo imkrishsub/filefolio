@@ -456,28 +456,42 @@ class SyncFolderService:
             # Save to database
             conn = get_main_db_connection()
             cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT INTO documents
-                (original_filename, stored_filename, auto_filename, file_path, file_hash,
-                 tags, category, upload_date, content_preview, thumbnail_path)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    file_path.name,
-                    stored_filename,
-                    None,
-                    str(dest_path),
-                    file_hash,
-                    json.dumps(tags),
-                    category,
-                    datetime.now().isoformat(),
-                    text_preview,
-                    thumbnail_path,
-                ),
-            )
-            doc_id = cursor.lastrowid
-            conn.commit()
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO documents
+                    (original_filename, stored_filename, auto_filename, file_path, file_hash,
+                     tags, category, upload_date, content_preview, thumbnail_path)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        file_path.name,
+                        stored_filename,
+                        None,
+                        str(dest_path),
+                        file_hash,
+                        json.dumps(tags),
+                        category,
+                        datetime.now().isoformat(),
+                        text_preview,
+                        thumbnail_path,
+                    ),
+                )
+                doc_id = cursor.lastrowid
+                conn.commit()
+            except sqlite3.IntegrityError:
+                # A concurrent sync event inserted the same hash after our pre-check.
+                conn.close()
+                dest_path.unlink(missing_ok=True)
+                if thumbnail_path:
+                    (self.thumbnails_dir / Path(thumbnail_path).name).unlink(
+                        missing_ok=True
+                    )
+                logger.warning(
+                    f"Duplicate detected (race): {file_path.name} already exists "
+                    f"(hash={file_hash})"
+                )
+                return False
             conn.close()
 
             logger.info(

@@ -103,10 +103,24 @@ def init_db():
         )
     """)
 
-    # Create index on file_hash for fast duplicate detection
-    cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_file_hash ON documents(file_hash)
-    """)
+    # Migrate: drop old non-unique index, create unique index to prevent duplicate inserts.
+    # WHERE file_hash IS NOT NULL so rows without a hash (legacy data) don't conflict.
+    cursor.execute("DROP INDEX IF EXISTS idx_file_hash")
+    try:
+        cursor.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_file_hash
+            ON documents(file_hash)
+            WHERE file_hash IS NOT NULL
+        """)
+    except sqlite3.IntegrityError:
+        # Existing database has duplicate hashes from a previous race condition.
+        # Log a warning; the code-level IntegrityError catch still provides partial protection.
+        import logging as _logging
+
+        _logging.getLogger(__name__).warning(
+            "Could not create UNIQUE index on file_hash: existing duplicate hashes detected. "
+            "Deduplicate the documents table to enforce this constraint."
+        )
 
     # Full-text search virtual table
     cursor.execute("""
@@ -463,28 +477,52 @@ async def upload_pdf(file: UploadFile = File(...)):
     # Save to database
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        """
-        INSERT INTO documents
-        (original_filename, stored_filename, auto_filename, file_path, file_hash,
-         tags, category, upload_date, content_preview, thumbnail_path)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """,
-        (
-            file.filename,
-            stored_filename,
-            None,  # No auto-renaming
-            str(file_path),
-            file_hash,
-            json.dumps(tags),
-            category,
-            datetime.now().isoformat(),
-            text_preview,
-            thumbnail_path,
-        ),
-    )
-    doc_id = cursor.lastrowid
-    conn.commit()
+    try:
+        cursor.execute(
+            """
+            INSERT INTO documents
+            (original_filename, stored_filename, auto_filename, file_path, file_hash,
+             tags, category, upload_date, content_preview, thumbnail_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                file.filename,
+                stored_filename,
+                None,  # No auto-renaming
+                str(file_path),
+                file_hash,
+                json.dumps(tags),
+                category,
+                datetime.now().isoformat(),
+                text_preview,
+                thumbnail_path,
+            ),
+        )
+        doc_id = cursor.lastrowid
+        conn.commit()
+    except sqlite3.IntegrityError:
+        # A concurrent upload of the same file beat us to the INSERT after our pre-check.
+        conn.close()
+        file_path.unlink(missing_ok=True)
+        if thumbnail_path:
+            (THUMBNAILS_DIR / Path(thumbnail_path).name).unlink(missing_ok=True)
+        lookup = get_db_connection()
+        row = lookup.execute(
+            "SELECT original_filename, upload_date FROM documents WHERE file_hash = ?",
+            (file_hash,),
+        ).fetchone()
+        lookup.close()
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                (
+                    f"Duplicate file detected. This file was already uploaded as"
+                    f" '{row['original_filename']}' on {row['upload_date'][:10]}"
+                )
+                if row
+                else "Duplicate file detected."
+            ),
+        )
     conn.close()
 
     return {

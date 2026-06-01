@@ -1369,9 +1369,21 @@ async def create_backup(background_tasks: BackgroundTasks):
 
         # Create ZIP archive
         with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as zip_file:
-            # Add database
+            # Add database using the SQLite backup API for a consistent snapshot
+            # even when WAL has unflushed writes.
             if DB_PATH.exists():
-                zip_file.write(DB_PATH, "data/documents.db")
+                db_backup_fd, db_backup_path = tempfile.mkstemp(suffix=".db")
+                os.close(db_backup_fd)
+                try:
+                    src_conn = sqlite3.connect(str(DB_PATH))
+                    dst_conn = sqlite3.connect(db_backup_path)
+                    with dst_conn:
+                        src_conn.backup(dst_conn)
+                    dst_conn.close()
+                    src_conn.close()
+                    zip_file.write(db_backup_path, "data/documents.db")
+                finally:
+                    os.unlink(db_backup_path)
 
             # Add all PDFs
             if UPLOAD_DIR.exists():

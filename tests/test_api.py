@@ -603,6 +603,30 @@ class TestBackupRestoreEndpoints:
         assert "version" in metadata
         assert "backup_date" in metadata
 
+    def test_backup_database_is_valid_sqlite(self, client):
+        """data/documents.db in the backup ZIP is a valid SQLite database (not a raw copy)."""
+        response = client.get("/backup")
+        assert response.status_code == 200
+        buf = io.BytesIO(response.content)
+        with zipfile.ZipFile(buf) as zf:
+            db_bytes = zf.read("data/documents.db")
+        # SQLite databases always start with the 16-byte magic string
+        assert db_bytes[:16] == b"SQLite format 3\x00"
+        # Verify it is a fully readable database by querying it in-memory
+        import sqlite3 as _sqlite3
+        import tempfile, os as _os
+        fd, tmp = tempfile.mkstemp(suffix=".db")
+        _os.close(fd)
+        try:
+            with open(tmp, "wb") as f:
+                f.write(db_bytes)
+            conn = _sqlite3.connect(tmp)
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+            conn.close()
+        finally:
+            _os.unlink(tmp)
+        assert "documents" in tables
+
     def test_restore_happy_path(self, client, tmp_path, monkeypatch):
         """POST /restore with a valid backup ZIP returns success and correct stats."""
         import backend.main as main

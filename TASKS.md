@@ -56,17 +56,19 @@
   - Notes: Removed dark mode and multi-language bullets. Rewrote the four keepers with benefit-led copy, one concrete technical anchor each. Merged to master.
 
 ### Correctness fixes
-- [ ] Fix `asyncio.run()` calls from watchdog thread in sync service
+- [x] Fix `asyncio.run()` calls from watchdog thread in sync service
   - ID: T009
   - Date added: 2026-05-23
+  - Date completed: 2026-05-31
   - Priority: high
-  - Notes: `asyncio.run()` creates a new event loop each call; conflicts with the FastAPI event loop in the same process. Use a dedicated thread-local event loop or make `_process_pdf` synchronous.
+  - Notes: Made _process_pdf and _process_file plain def (all I/O was synchronous). Removed asyncio.run() at both call sites and dropped the unused import. Added 3 tests verifying neither function is a coroutine.
 
-- [ ] Fix race condition in duplicate detection
+- [x] Fix race condition in duplicate detection
   - ID: T010
   - Date added: 2026-05-23
+  - Date completed: 2026-06-01
   - Priority: medium
-  - Notes: Hash check and INSERT are in separate transactions; two concurrent uploads of the same file can both pass and both insert. Add a `UNIQUE` constraint on `file_hash` and catch `IntegrityError` at insert time instead.
+  - Notes: Replaced non-unique idx_file_hash with a partial UNIQUE index (WHERE file_hash IS NOT NULL). Both upload_pdf and _process_pdf now catch IntegrityError at INSERT, clean up orphaned file and thumbnail, and return 409/False. Pre-check SELECT kept as fast early-exit.
 
 - [x] Make `reindex_documents_content` crash-safe
   - ID: T011

@@ -511,6 +511,12 @@ async def upload_pdf(file: UploadFile = File(...)):
 
         # Store first 2000 chars for preview and full text for search
         text_preview = full_text[:2000]
+    except pypdf.errors.PdfReadError:
+        file_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=400,
+            detail="File appears to be corrupted or is not a valid PDF.",
+        )
     except Exception as e:
         text_preview = f"Error extracting text: {str(e)}"
 

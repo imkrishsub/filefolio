@@ -123,6 +123,17 @@ class TestUploadEndpoint:
         assert response.status_code == 400
         assert "empty" in response.json()["detail"].lower()
 
+    def test_upload_corrupted_pdf_returns_400(self, client):
+        """A file with %PDF magic bytes but corrupt structure should return 400."""
+        # Valid magic bytes, garbage body — pypdf cannot parse this
+        corrupted = b"%PDF-1.4\n%%garbage_not_a_real_pdf_xref"
+        response = client.post(
+            "/upload",
+            files={"file": ("corrupt.pdf", io.BytesIO(corrupted), "application/pdf")},
+        )
+        assert response.status_code == 400
+        assert "corrupt" in response.json()["detail"].lower() or "invalid" in response.json()["detail"].lower()
+
 
 class TestDocumentsEndpoint:
     """Tests for the /documents endpoint."""

@@ -454,6 +454,12 @@ async def upload_pdf(file: UploadFile = File(...)):
 
     file_hash = sha256_hash.hexdigest()
 
+    if bytes_written == 0:
+        file_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=400, detail="Empty file. Please upload a non-empty PDF."
+        )
+
     # Check for duplicates
     conn = get_db_connection()
     cursor = conn.cursor()

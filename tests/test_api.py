@@ -113,6 +113,16 @@ class TestUploadEndpoint:
         assert response2.status_code == 409
         assert "Duplicate file detected" in response2.json()["detail"]
 
+    def test_upload_empty_file_returns_400(self, client):
+        """Uploading a 0-byte file should return 400, not 200."""
+        empty_pdf = b""
+        response = client.post(
+            "/upload",
+            files={"file": ("empty.pdf", io.BytesIO(empty_pdf), "application/pdf")},
+        )
+        assert response.status_code == 400
+        assert "empty" in response.json()["detail"].lower()
+
 
 class TestDocumentsEndpoint:
     """Tests for the /documents endpoint."""

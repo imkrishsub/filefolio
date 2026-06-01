@@ -511,7 +511,7 @@ async def upload_pdf(file: UploadFile = File(...)):
 
         # Store first 2000 chars for preview and full text for search
         text_preview = full_text[:2000]
-    except pypdf.errors.WrongPasswordError:
+    except pypdf.errors.FileNotDecryptedError:
         file_path.unlink(missing_ok=True)
         raise HTTPException(
             status_code=400,

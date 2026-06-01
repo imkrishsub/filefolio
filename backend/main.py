@@ -517,7 +517,11 @@ async def upload_pdf(file: UploadFile = File(...)):
             status_code=400,
             detail="PDF is password-protected and cannot be processed.",
         )
-    except (pypdf.errors.PdfReadError, pypdf.errors.ParseError):
+    except (
+        pypdf.errors.PdfReadError,
+        pypdf.errors.ParseError,
+        pypdf.errors.PageSizeNotDefinedError,
+    ):
         file_path.unlink(missing_ok=True)
         raise HTTPException(
             status_code=400,

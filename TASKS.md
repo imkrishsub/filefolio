@@ -121,11 +121,12 @@
   - Notes: Deleted TestBulkOperations class from test_basic.py. Coverage is provided by TestBulkDownloadEndpoint in test_api.py, which uses two distinct PDFs and verifies zip content-type, 400 on empty list, and 404 on missing docs.
 
 ### Polish & Production
-- [ ] Add error handling and validation improvements
+- [x] Add error handling and validation improvements
   - ID: T018
   - Date added: 2025-10-27
+  - Date completed: 2026-06-01
   - Priority: medium
-  - Notes: Better feedback for failed uploads, file size limits, corrupted PDFs
+  - Notes: Reject empty files (400), corrupted/encrypted PDFs (400 with distinct messages via PyPdfError base class), sanitize filenames (basename only, Windows backslash normalisation, null-byte guard). 124 tests passing.
 
 ### Enhancements
 - [ ] Add custom tagging rules/templates

@@ -77,11 +77,12 @@
   - Priority: medium
   - Notes: Set isolation_level=None and wrapped the entire function in an explicit BEGIN/COMMIT/ROLLBACK. On BaseException, ROLLBACK restores the dropped triggers. Two tests added: one verifies triggers survive a KeyboardInterrupt mid-reindex, one verifies the happy path.
 
-- [ ] Use SQLite backup API in `/backup`
+- [x] Use SQLite backup API in `/backup`
   - ID: T012
   - Date added: 2026-05-23
+  - Date completed: 2026-06-01
   - Priority: medium
-  - Notes: Copying the database file directly may produce an inconsistent backup if WAL has unflushed writes. Use `conn.backup(dest)` instead.
+  - Notes: Replaced `zip_file.write(DB_PATH)` with `sqlite3.connect().backup()` for a consistent online snapshot safe under WAL. Added test_backup_database_is_valid_sqlite verifying the ZIP entry is a readable SQLite file with the expected schema.
 
 - [ ] Fix thumbnail filename derivation
   - ID: T013

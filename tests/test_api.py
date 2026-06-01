@@ -739,3 +739,55 @@ class TestDuplicateDetectionRace:
         r2 = client.post("/upload", files=files)
         assert r2.status_code == 409
         assert "Duplicate file detected" in r2.json()["detail"]
+
+
+class TestReindexCrashSafe:
+    """Verify that reindex_documents_content is transactional: a mid-operation crash
+    must not leave the database without its FTS triggers."""
+
+    _TRIGGER_NAMES = {"documents_ai", "documents_ad", "documents_au"}
+
+    def _trigger_names_in_db(self, db_path):
+        conn = sqlite3.connect(db_path)
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger'"
+            " AND name IN ('documents_ai', 'documents_ad', 'documents_au')"
+        ).fetchall()
+        conn.close()
+        return {row[0] for row in rows}
+
+    def test_triggers_survive_mid_reindex_crash(self, test_db, monkeypatch, sample_pdf_file):
+        """KeyboardInterrupt during reindex must not destroy FTS triggers."""
+        import backend.main as main
+        import pypdf
+
+        conn = sqlite3.connect(test_db)
+        conn.execute(
+            "INSERT INTO documents"
+            " (original_filename, stored_filename, file_path, auto_filename, tags, category, content_preview, upload_date)"
+            " VALUES ('crash.pdf', 'crash.pdf', ?, 'crash.pdf', '[]', 'Test', '', '2026-01-01')",
+            (str(sample_pdf_file),),
+        )
+        conn.commit()
+        conn.close()
+
+        def raise_interrupt(*args, **kwargs):
+            raise KeyboardInterrupt("simulated crash")
+
+        monkeypatch.setattr(pypdf, "PdfReader", raise_interrupt)
+
+        with pytest.raises(KeyboardInterrupt):
+            main.reindex_documents_content()
+
+        assert self._trigger_names_in_db(test_db) == self._TRIGGER_NAMES, (
+            "FTS triggers were lost after a mid-reindex crash — "
+            "reindex_documents_content must roll back the transaction on failure"
+        )
+
+    def test_triggers_present_after_successful_reindex(self, test_db):
+        """Happy path: all three FTS triggers exist after a clean reindex (empty DB)."""
+        import backend.main as main
+
+        main.reindex_documents_content()
+
+        assert self._trigger_names_in_db(test_db) == self._TRIGGER_NAMES

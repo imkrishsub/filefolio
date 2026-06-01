@@ -68,11 +68,12 @@
   - Priority: medium
   - Notes: Hash check and INSERT are in separate transactions; two concurrent uploads of the same file can both pass and both insert. Add a `UNIQUE` constraint on `file_hash` and catch `IntegrityError` at insert time instead.
 
-- [ ] Make `reindex_documents_content` crash-safe
+- [x] Make `reindex_documents_content` crash-safe
   - ID: T011
   - Date added: 2026-05-23
+  - Date completed: 2026-06-01
   - Priority: medium
-  - Notes: If the function crashes after dropping triggers but before recreating them, the FTS index goes permanently out of sync. Wrap trigger drop/recreate in a transaction, or rebuild FTS in a shadow table and rename atomically.
+  - Notes: Set isolation_level=None and wrapped the entire function in an explicit BEGIN/COMMIT/ROLLBACK. On BaseException, ROLLBACK restores the dropped triggers. Two tests added: one verifies triggers survive a KeyboardInterrupt mid-reindex, one verifies the happy path.
 
 - [ ] Use SQLite backup API in `/backup`
   - ID: T012

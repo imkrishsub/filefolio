@@ -247,106 +247,119 @@ migrate_existing_documents_to_fts()
 def reindex_documents_content():
     """Re-extract text from PDFs and update FTS index."""
     conn = get_db_connection()
+    # Disable the driver's implicit transaction management so that DDL statements
+    # (DROP/CREATE TRIGGER) participate in the explicit transaction below.
+    # SQLite itself treats DDL as transactional; Python's sqlite3 module does not
+    # by default, which would cause DROP TRIGGER to auto-commit and become
+    # irrecoverable if a crash follows.
+    conn.isolation_level = None
     cursor = conn.cursor()
+    cursor.execute("BEGIN")
+    try:
+        # Temporarily disable triggers
+        cursor.execute("DROP TRIGGER IF EXISTS documents_au")
+        cursor.execute("DROP TRIGGER IF EXISTS documents_ai")
+        cursor.execute("DROP TRIGGER IF EXISTS documents_ad")
 
-    # Temporarily disable triggers
-    cursor.execute("DROP TRIGGER IF EXISTS documents_au")
-    cursor.execute("DROP TRIGGER IF EXISTS documents_ai")
-    cursor.execute("DROP TRIGGER IF EXISTS documents_ad")
+        # Get all documents
+        cursor.execute(
+            "SELECT id, file_path, original_filename, auto_filename, tags, category FROM documents"
+        )
+        documents = cursor.fetchall()
 
-    # Get all documents
-    cursor.execute(
-        "SELECT id, file_path, original_filename, auto_filename, tags, category FROM documents"
-    )
-    documents = cursor.fetchall()
+        print(f"Re-indexing {len(documents)} documents...")
 
-    print(f"Re-indexing {len(documents)} documents...")
+        # Clear and repopulate FTS index
+        cursor.execute("DELETE FROM documents_fts")
 
-    # Clear and repopulate FTS index
-    cursor.execute("DELETE FROM documents_fts")
+        updated = 0
 
-    updated = 0
+        for doc_id, file_path, orig_name, auto_name, tags, category in documents:
+            try:
+                if not Path(file_path).exists():
+                    print(f"Skipping {file_path} - file not found")
+                    continue
 
-    for doc_id, file_path, orig_name, auto_name, tags, category in documents:
-        try:
-            if not Path(file_path).exists():
-                print(f"Skipping {file_path} - file not found")
-                continue
+                reader = pypdf.PdfReader(file_path)
+                full_text = ""
+                # Extract from all pages (up to 20 for performance)
+                for page in reader.pages[:20]:
+                    full_text += page.extract_text() + " "
 
-            reader = pypdf.PdfReader(file_path)
-            full_text = ""
-            # Extract from all pages (up to 20 for performance)
-            for page in reader.pages[:20]:
-                full_text += page.extract_text() + " "
+                # If text extraction yielded little or no text, try OCR
+                if len(full_text.strip()) < 50:
+                    print(f"  Document {doc_id} appears scanned, attempting OCR...")
+                    try:
+                        images = convert_from_path(file_path, dpi=300)
+                        ocr_text = ""
+                        for image in images[:20]:
+                            page_text = pytesseract.image_to_string(
+                                image, lang="eng+deu"
+                            )
+                            ocr_text += page_text + " "
 
-            # If text extraction yielded little or no text, try OCR
-            if len(full_text.strip()) < 50:
-                print(f"  Document {doc_id} appears scanned, attempting OCR...")
-                try:
-                    images = convert_from_path(file_path, dpi=300)
-                    ocr_text = ""
-                    for image in images[:20]:
-                        page_text = pytesseract.image_to_string(image, lang="eng+deu")
-                        ocr_text += page_text + " "
+                        if len(ocr_text.strip()) > len(full_text.strip()):
+                            full_text = ocr_text
+                            print(
+                                f"  OCR successful: {len(full_text)} characters extracted"
+                            )
+                    except Exception as ocr_error:
+                        print(f"  OCR failed: {ocr_error}")
 
-                    if len(ocr_text.strip()) > len(full_text.strip()):
-                        full_text = ocr_text
-                        print(
-                            f"  OCR successful: {len(full_text)} characters extracted"
-                        )
-                except Exception as ocr_error:
-                    print(f"  OCR failed: {ocr_error}")
+                text_preview = full_text[:2000]
 
-            text_preview = full_text[:2000]
+                # Update documents table
+                cursor.execute(
+                    """
+                    UPDATE documents
+                    SET content_preview = ?
+                    WHERE id = ?
+                """,
+                    (text_preview, doc_id),
+                )
 
-            # Update documents table
-            cursor.execute(
-                """
-                UPDATE documents
-                SET content_preview = ?
-                WHERE id = ?
-            """,
-                (text_preview, doc_id),
-            )
+                # Insert into FTS index
+                cursor.execute(
+                    """
+                    INSERT INTO documents_fts(rowid, original_filename, auto_filename, tags, category, content)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                    (doc_id, orig_name, auto_name, tags, category, text_preview),
+                )
 
-            # Insert into FTS index
-            cursor.execute(
-                """
+                updated += 1
+
+            except Exception as e:
+                print(f"Error processing document {doc_id} ({file_path}): {e}")
+
+        # Recreate triggers
+        cursor.execute("""
+            CREATE TRIGGER documents_ai AFTER INSERT ON documents BEGIN
                 INSERT INTO documents_fts(rowid, original_filename, auto_filename, tags, category, content)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """,
-                (doc_id, orig_name, auto_name, tags, category, text_preview),
-            )
+                VALUES (new.id, new.original_filename, new.auto_filename, new.tags, new.category, new.content_preview);
+            END
+        """)
 
-            updated += 1
+        cursor.execute("""
+            CREATE TRIGGER documents_ad AFTER DELETE ON documents BEGIN
+                DELETE FROM documents_fts WHERE rowid = old.id;
+            END
+        """)
 
-        except Exception as e:
-            print(f"Error processing document {doc_id} ({file_path}): {e}")
+        cursor.execute("""
+            CREATE TRIGGER documents_au AFTER UPDATE ON documents BEGIN
+                DELETE FROM documents_fts WHERE rowid = old.id;
+                INSERT INTO documents_fts(rowid, original_filename, auto_filename, tags, category, content)
+                VALUES (new.id, new.original_filename, new.auto_filename, new.tags, new.category, new.content_preview);
+            END
+        """)
 
-    # Recreate triggers
-    cursor.execute("""
-        CREATE TRIGGER documents_ai AFTER INSERT ON documents BEGIN
-            INSERT INTO documents_fts(rowid, original_filename, auto_filename, tags, category, content)
-            VALUES (new.id, new.original_filename, new.auto_filename, new.tags, new.category, new.content_preview);
-        END
-    """)
-
-    cursor.execute("""
-        CREATE TRIGGER documents_ad AFTER DELETE ON documents BEGIN
-            DELETE FROM documents_fts WHERE rowid = old.id;
-        END
-    """)
-
-    cursor.execute("""
-        CREATE TRIGGER documents_au AFTER UPDATE ON documents BEGIN
-            DELETE FROM documents_fts WHERE rowid = old.id;
-            INSERT INTO documents_fts(rowid, original_filename, auto_filename, tags, category, content)
-            VALUES (new.id, new.original_filename, new.auto_filename, new.tags, new.category, new.content_preview);
-        END
-    """)
-
-    conn.commit()
-    conn.close()
+        cursor.execute("COMMIT")
+    except BaseException:
+        cursor.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()
     print(f"Successfully re-indexed {updated}/{len(documents)} documents")
 
 

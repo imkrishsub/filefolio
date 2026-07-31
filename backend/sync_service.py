@@ -457,9 +457,14 @@ class SyncFolderService:
 
             # Move out of staging into uploads/<Category>/<Year>/
             upload_date = datetime.now().isoformat()
-            dest_path, stored_filename = storage.place(
-                dest_path, self.upload_dir, category, upload_date, stored_filename
-            )
+            try:
+                dest_path, stored_filename = storage.place(
+                    dest_path, self.upload_dir, category, upload_date, stored_filename
+                )
+            except OSError as exc:
+                dest_path.unlink(missing_ok=True)
+                logger.error(f"Could not store {file_path.name}: {exc}")
+                return False
 
             # Generate thumbnail from the final location
             thumbnail_path = generate_thumbnail(dest_path, stored_filename)

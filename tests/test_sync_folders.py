@@ -409,3 +409,39 @@ class TestSyncStorageLayout:
 
         assert file_path.startswith("Contract/")
         assert (main.UPLOAD_DIR / file_path).exists()
+
+    def test_sync_place_oserror_cleans_staging_and_skips_insert(
+        self, test_db, temp_test_dir, sample_pdf_bytes, monkeypatch
+    ):
+        """If storage.place() raises OSError, the staged copy must not be orphaned
+        and no row should be inserted for the failed attempt."""
+        import sqlite3
+
+        import backend.main as main
+        import backend.storage as storage
+
+        monkeypatch.setattr(
+            main, "process_document", lambda text, filename: (["test"], "Contract")
+        )
+        monkeypatch.setattr(main, "generate_thumbnail", lambda path, name: None)
+
+        def raise_oserror(*args, **kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(storage, "place", raise_oserror)
+
+        source_dir = temp_test_dir / "watched"
+        source_dir.mkdir(exist_ok=True)
+        source_pdf = source_dir / "synced_place_failure.pdf"
+        source_pdf.write_bytes(sample_pdf_bytes)
+
+        assert main.sync_service._process_pdf(source_pdf, folder_id=1) is False
+
+        staging = storage.staging_dir(main.UPLOAD_DIR)
+        leftover = list(staging.glob("*")) if staging.exists() else []
+        assert leftover == []
+
+        conn = sqlite3.connect(test_db)
+        count = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+        conn.close()
+        assert count == 0

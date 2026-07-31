@@ -182,3 +182,105 @@ def move_to_category(file_path: str, upload_dir: Path, new_category, upload_date
     reserved = _reserve_destination(destination)
     _move_into_place(current, reserved)
     return reserved.relative_to(upload_dir).as_posix()
+
+
+def _locate_source(row, upload_dir: Path):
+    """Find the file belonging to a document row, or None.
+
+    Tries the stored path, then the flat legacy location, then a recursive search by
+    name (which recovers a row whose move succeeded but whose UPDATE did not).
+    """
+    stored_path = row["file_path"]
+    if stored_path:
+        candidate = Path(str(stored_path))
+        if not candidate.is_absolute():
+            candidate = upload_dir / candidate
+        if candidate.is_file():
+            return candidate
+
+    name = row["stored_filename"]
+    if not name:
+        return None
+
+    name = Path(str(name).replace("\\", "/")).name
+    flat = upload_dir / name
+    if flat.is_file():
+        return flat
+
+    for found in upload_dir.rglob(name):
+        if found.is_file() and STAGING_DIRNAME not in found.relative_to(upload_dir).parts:
+            return found
+    return None
+
+
+def _migrate_row(conn, row, upload_dir: Path) -> bool:
+    """Organise one document row. Returns True if the file was moved."""
+    stored_path = row["file_path"]
+    if stored_path:
+        candidate = Path(str(stored_path))
+        if not candidate.is_absolute() and (upload_dir / candidate).is_file():
+            return False  # already organised
+
+    source = _locate_source(row, upload_dir)
+    if source is None:
+        raise FileNotFoundError(
+            f"no file on disk for document {row['id']} ({row['stored_filename']!r})"
+        )
+
+    destination = upload_dir / relative_path_for(
+        row["category"], row["upload_date"], row["stored_filename"] or source.name
+    )
+    if destination != source:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination = _reserve_destination(destination)
+        _move_into_place(source, destination)
+
+    # stored_filename is deliberately left alone: thumbnail_path was derived from it.
+    conn.execute(
+        "UPDATE documents SET file_path = ? WHERE id = ?",
+        (destination.relative_to(upload_dir).as_posix(), row["id"]),
+    )
+    return True
+
+
+def migrate_uploads_to_category_folders(connection_factory, upload_dir: Path) -> dict:
+    """Move every stored PDF into its category/year folder. Safe to run repeatedly.
+
+    Args:
+        connection_factory: Zero-argument callable returning a sqlite3.Connection
+            with ``row_factory = sqlite3.Row``.
+        upload_dir: Root of the upload directory.
+
+    Returns:
+        Counts of 'moved' (relocated), 'skipped' (already organised) and 'failed'
+        (no file found, or the move raised — the row is left untouched).
+    """
+    upload_dir = Path(upload_dir)
+    stats = {"moved": 0, "skipped": 0, "failed": 0}
+
+    conn = connection_factory()
+    try:
+        rows = conn.execute(
+            "SELECT id, stored_filename, file_path, category, upload_date FROM documents"
+        ).fetchall()
+        for row in rows:
+            try:
+                if _migrate_row(conn, row, upload_dir):
+                    stats["moved"] += 1
+                else:
+                    stats["skipped"] += 1
+            except Exception as exc:
+                stats["failed"] += 1
+                logger.warning("Could not organise document %s: %s", row["id"], exc)
+        conn.commit()
+    finally:
+        conn.close()
+
+    if stats["moved"] or stats["failed"]:
+        logger.info(
+            "Upload folder migration: %s moved, %s skipped, %s failed",
+            stats["moved"],
+            stats["skipped"],
+            stats["failed"],
+        )
+    return stats

@@ -214,10 +214,13 @@ def _locate_source(row, upload_dir: Path):
 
 
 def _migrate_row(conn, row, upload_dir: Path) -> bool:
-    """Organise one document row. Returns True if the file was moved."""
+    """Organise one document row. Returns True if the file was relocated."""
     stored_path = row["file_path"]
     if stored_path:
         candidate = Path(str(stored_path))
+        # A relative file_path is only ever written by place(), move_to_category(),
+        # or this migration, always in the organised Category/Year/name form -- so a
+        # file existing at that relative path is a safe proxy for "already organised".
         if not candidate.is_absolute() and (upload_dir / candidate).is_file():
             return False  # already organised
 
@@ -230,7 +233,12 @@ def _migrate_row(conn, row, upload_dir: Path) -> bool:
     destination = upload_dir / relative_path_for(
         row["category"], row["upload_date"], row["stored_filename"] or source.name
     )
-    if destination != source:
+
+    # moved is conjunctive with the row actually being relocated: a row recovered by
+    # _locate_source that already sits at its correct destination (the move happened,
+    # only the UPDATE did not) must not be double-moved or counted as moved.
+    moved = destination != source
+    if moved:
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination = _reserve_destination(destination)
         _move_into_place(source, destination)
@@ -240,7 +248,7 @@ def _migrate_row(conn, row, upload_dir: Path) -> bool:
         "UPDATE documents SET file_path = ? WHERE id = ?",
         (destination.relative_to(upload_dir).as_posix(), row["id"]),
     )
-    return True
+    return moved
 
 
 def migrate_uploads_to_category_folders(connection_factory, upload_dir: Path) -> dict:
@@ -265,14 +273,21 @@ def migrate_uploads_to_category_folders(connection_factory, upload_dir: Path) ->
         ).fetchall()
         for row in rows:
             try:
-                if _migrate_row(conn, row, upload_dir):
-                    stats["moved"] += 1
-                else:
-                    stats["skipped"] += 1
+                moved = _migrate_row(conn, row, upload_dir)
             except Exception as exc:
                 stats["failed"] += 1
                 logger.warning("Could not organise document %s: %s", row["id"], exc)
-        conn.commit()
+                continue
+
+            # Commit immediately, per row: if the process is interrupted partway
+            # through a long pass, rows already processed stay recorded rather than
+            # reverting to their pre-move file_path (which would force them onto the
+            # expensive rglob recovery path again at next boot).
+            conn.commit()
+            if moved:
+                stats["moved"] += 1
+            else:
+                stats["skipped"] += 1
     finally:
         conn.close()
 

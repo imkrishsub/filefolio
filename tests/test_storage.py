@@ -306,14 +306,108 @@ class TestMigration:
         assert stored == "doc.pdf"
 
     def test_ignores_files_still_in_staging(self, tmp_path):
+        """A document row whose only matching file lives under .staging/ must not be
+        adopted by the recursive rglob search in _locate_source: it is left failed
+        and untouched, not silently treated as found."""
         upload_dir = tmp_path / "uploads"
         staging = storage.staging_dir(upload_dir)
         staging.mkdir(parents=True)
         (staging / "half_written.pdf").write_bytes(b"%PDF-1.4")
 
         _, factory = _migration_db(tmp_path)
+        _insert(
+            factory,
+            "half_written.pdf",
+            "/nowhere/half_written.pdf",
+            "Invoice",
+            "2026-01-01T00:00:00",
+        )
 
         stats = storage.migrate_uploads_to_category_folders(factory, upload_dir)
 
-        assert stats == {"moved": 0, "skipped": 0, "failed": 0}
+        assert stats == {"moved": 0, "skipped": 0, "failed": 1}
+        assert _file_paths(factory) == ["/nowhere/half_written.pdf"]
         assert (staging / "half_written.pdf").exists()
+
+    def test_recovers_a_row_via_recursive_search_when_the_move_succeeded_but_the_update_did_not(
+        self, tmp_path
+    ):
+        """Exercises the rglob fallback branch in _locate_source specifically: the file
+        already sits nested at <upload_dir>/Category/Year/name.pdf (not flat under
+        upload_dir, so the earlier flat-location check in _locate_source cannot find
+        it), while the row's file_path is still the stale pre-move value. This is the
+        documented "move succeeded, UPDATE did not" recovery case."""
+        upload_dir = tmp_path / "uploads"
+        upload_dir.mkdir()
+        organised = upload_dir / "Invoice" / "2026" / "doc.pdf"
+        organised.parent.mkdir(parents=True)
+        organised.write_bytes(b"%PDF-1.4")
+
+        _, factory = _migration_db(tmp_path)
+        _insert(
+            factory, "doc.pdf", str(upload_dir / "doc.pdf"), "Invoice", "2026-01-01T00:00:00"
+        )
+
+        stats = storage.migrate_uploads_to_category_folders(factory, upload_dir)
+
+        # Recovered via rglob and the row corrected; but since the file already sat at
+        # its final destination nothing was physically relocated, so this is "skipped"
+        # under the conjunctive moved = relocated AND rewritten definition, not "moved".
+        assert stats == {"moved": 0, "skipped": 1, "failed": 0}
+        assert _file_paths(factory) == ["Invoice/2026/doc.pdf"]
+        assert organised.exists()
+        assert not (upload_dir / "Invoice" / "2026" / "doc_1.pdf").exists()
+
+    def test_absolute_path_already_at_destination_is_skipped_and_normalised(self, tmp_path):
+        """An absolute file_path that already points directly at the correctly
+        organised destination (found by the first check in _locate_source, not the
+        rglob fallback) must not be re-moved -- only normalised to the relative form
+        -- and counted skipped rather than moved."""
+        upload_dir = tmp_path / "uploads"
+        upload_dir.mkdir()
+        organised = upload_dir / "Invoice" / "2026" / "doc.pdf"
+        organised.parent.mkdir(parents=True)
+        organised.write_bytes(b"%PDF-1.4")
+
+        _, factory = _migration_db(tmp_path)
+        _insert(factory, "doc.pdf", str(organised), "Invoice", "2026-01-01T00:00:00")
+
+        stats = storage.migrate_uploads_to_category_folders(factory, upload_dir)
+
+        assert stats == {"moved": 0, "skipped": 1, "failed": 0}
+        assert _file_paths(factory) == ["Invoice/2026/doc.pdf"]
+        assert organised.exists()
+
+    def test_commits_progress_per_row_so_an_interruption_does_not_lose_it(
+        self, tmp_path, monkeypatch
+    ):
+        """If the process is interrupted partway through a multi-row pass, rows already
+        processed before the interruption must already be committed -- not rolled back
+        by a single end-of-pass commit that never runs."""
+        upload_dir = tmp_path / "uploads"
+        upload_dir.mkdir()
+        first = upload_dir / "first.pdf"
+        first.write_bytes(b"%PDF-1.4")
+        second = upload_dir / "second.pdf"
+        second.write_bytes(b"%PDF-1.4")
+
+        _, factory = _migration_db(tmp_path)
+        _insert(factory, first.name, str(first), "Invoice", "2026-01-01T00:00:00")
+        _insert(factory, second.name, str(second), "Invoice", "2026-01-01T00:00:00")
+
+        original_locate_source = storage._locate_source
+
+        def interrupt_on_second_row(row, upload_dir):
+            if row["stored_filename"] == "second.pdf":
+                raise KeyboardInterrupt("simulated interruption")
+            return original_locate_source(row, upload_dir)
+
+        monkeypatch.setattr(storage, "_locate_source", interrupt_on_second_row)
+
+        with pytest.raises(KeyboardInterrupt):
+            storage.migrate_uploads_to_category_folders(factory, upload_dir)
+
+        # First row's move and file_path update were committed before the interruption;
+        # the second row was never reached, so its stale absolute file_path is intact.
+        assert _file_paths(factory) == ["Invoice/2026/first.pdf", str(second)]
+        assert (upload_dir / "Invoice" / "2026" / "first.pdf").exists()

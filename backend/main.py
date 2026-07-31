@@ -168,6 +168,11 @@ try:
 except ModuleNotFoundError:
     from sync_service import SyncFolderService
 
+try:
+    from backend import storage
+except ModuleNotFoundError:
+    import storage
+
 sync_service = SyncFolderService(DB_PATH, UPLOAD_DIR, THUMBNAILS_DIR)
 
 
@@ -276,11 +281,17 @@ def reindex_documents_content():
 
         for doc_id, file_path, orig_name, auto_name, tags, category in documents:
             try:
-                if not Path(file_path).exists():
+                try:
+                    resolved_path = storage.resolve(file_path, UPLOAD_DIR)
+                except ValueError:
+                    print(f"Skipping {file_path} - path outside the upload directory")
+                    continue
+
+                if not resolved_path.exists():
                     print(f"Skipping {file_path} - file not found")
                     continue
 
-                reader = pypdf.PdfReader(file_path)
+                reader = pypdf.PdfReader(resolved_path)
                 full_text = ""
                 # Extract from all pages (up to 20 for performance)
                 for page in reader.pages[:20]:
@@ -290,7 +301,7 @@ def reindex_documents_content():
                 if len(full_text.strip()) < 50:
                     print(f"  Document {doc_id} appears scanned, attempting OCR...")
                     try:
-                        images = convert_from_path(file_path, dpi=300)
+                        images = convert_from_path(resolved_path, dpi=300)
                         ocr_text = ""
                         for image in images[:20]:
                             page_text = pytesseract.image_to_string(
@@ -1077,7 +1088,15 @@ async def get_document(doc_id: int):
     if not row:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    return FileResponse(row[0])
+    try:
+        resolved_path = storage.resolve(row[0], UPLOAD_DIR)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid stored path")
+
+    if not resolved_path.exists():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    return FileResponse(resolved_path)
 
 
 @app.get("/download/{doc_id}")
@@ -1096,12 +1115,17 @@ async def download_single_document(doc_id: int):
 
     file_path, original_filename = row[0], row[1]
 
-    if not Path(file_path).exists():
+    try:
+        resolved_path = storage.resolve(file_path, UPLOAD_DIR)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid stored path")
+
+    if not resolved_path.exists():
         raise HTTPException(status_code=404, detail="File not found on disk")
 
     encoded_filename = urllib.parse.quote(original_filename)
     return FileResponse(
-        file_path,
+        resolved_path,
         media_type="application/pdf",
         headers={
             "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
@@ -1188,8 +1212,10 @@ async def delete_document(doc_id: int):
 
     # Delete physical files
     try:
-        if file_path and Path(file_path).exists():
-            Path(file_path).unlink()
+        if file_path:
+            resolved_path = storage.resolve(file_path, UPLOAD_DIR)
+            if resolved_path.exists():
+                resolved_path.unlink()
 
         if thumbnail_path:
             # Extract filename from URL path
@@ -1229,9 +1255,13 @@ async def download_multiple_documents(request: DownloadRequest):
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
         for doc_id, file_path, original_filename, stored_filename in rows:
-            if Path(file_path).exists():
+            try:
+                resolved_path = storage.resolve(file_path, UPLOAD_DIR)
+            except ValueError:
+                continue
+            if resolved_path.exists():
                 # Use original filename in the ZIP
-                zip_file.write(file_path, original_filename)
+                zip_file.write(resolved_path, original_filename)
 
     zip_buffer.seek(0)
 

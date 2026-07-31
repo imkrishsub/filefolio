@@ -111,6 +111,41 @@ class TestPlace:
 
         assert final_path == tmp_path / "Other" / "2026" / "doc.pdf"
 
+    def test_reservation_prevents_overwriting_the_existing_file(self, tmp_path):
+        existing = tmp_path / "Invoice" / "2026" / "20260731_101500_bill.pdf"
+        existing.parent.mkdir(parents=True)
+        existing.write_bytes(b"%PDF-1.4 first")
+
+        staged = storage.staging_dir(tmp_path)
+        staged.mkdir(parents=True)
+        source = staged / "20260731_101500_bill.pdf"
+        source.write_bytes(b"%PDF-1.4 second")
+
+        final_path, final_name = storage.place(
+            source, tmp_path, "Invoice", "2026-07-31T10:15:00", source.name
+        )
+
+        assert final_name == "20260731_101500_bill_1.pdf"
+        assert final_path.read_bytes() == b"%PDF-1.4 second"
+        assert existing.read_bytes() == b"%PDF-1.4 first"
+
+    def test_failed_move_does_not_leave_a_placeholder(self, tmp_path, monkeypatch):
+        staged = storage.staging_dir(tmp_path)
+        staged.mkdir(parents=True)
+        source = staged / "doc.pdf"
+        source.write_bytes(b"%PDF-1.4")
+
+        def boom(*args, **kwargs):
+            raise OSError("simulated failure")
+
+        monkeypatch.setattr(storage.os, "replace", boom)
+        monkeypatch.setattr(storage.shutil, "move", boom)
+
+        with pytest.raises(OSError):
+            storage.place(source, tmp_path, "Invoice", "2026-07-31T10:15:00", "doc.pdf")
+
+        assert not (tmp_path / "Invoice" / "2026" / "doc.pdf").exists()
+
 
 class TestMoveToCategory:
     def test_moves_to_the_new_category_keeping_the_original_year(self, tmp_path):

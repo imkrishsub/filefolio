@@ -440,10 +440,13 @@ async def upload_pdf(file: UploadFile = File(...)):
     if not safe_filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 
-    # Save file temporarily
+    # Stage the upload: the category, and therefore the destination folder, is not
+    # known until the text has been extracted and processed.
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     stored_filename = f"{timestamp}_{safe_filename}"
-    file_path = UPLOAD_DIR / stored_filename
+    staging = storage.staging_dir(UPLOAD_DIR)
+    staging.mkdir(parents=True, exist_ok=True)
+    file_path = staging / stored_filename
 
     # Stream to disk, enforcing size limit and calculating SHA-256 hash in one pass
     sha256_hash = hashlib.sha256()
@@ -542,11 +545,24 @@ async def upload_pdf(file: UploadFile = File(...)):
     except Exception as e:
         text_preview = f"Error extracting text: {str(e)}"
 
-    # Generate thumbnail
-    thumbnail_path = generate_thumbnail(file_path, stored_filename)
-
     # Process document for AI tagging (but don't rename)
     tags, category = process_document(text_preview, safe_filename)
+
+    # Move out of staging into uploads/<Category>/<Year>/. The filename may be
+    # uniquified here, so the thumbnail is generated afterwards from the final name.
+    upload_date = datetime.now().isoformat()
+    try:
+        file_path, stored_filename = storage.place(
+            file_path, UPLOAD_DIR, category, upload_date, stored_filename
+        )
+    except OSError as exc:
+        Path(file_path).unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=500, detail=f"Could not store the uploaded file: {exc}"
+        )
+
+    # Generate thumbnail
+    thumbnail_path = generate_thumbnail(file_path, stored_filename)
 
     # Save to database
     conn = get_db_connection()
@@ -563,11 +579,11 @@ async def upload_pdf(file: UploadFile = File(...)):
                 safe_filename,
                 stored_filename,
                 None,  # No auto-renaming
-                str(file_path),
+                file_path.relative_to(UPLOAD_DIR).as_posix(),
                 file_hash,
                 json.dumps(tags),
                 category,
-                datetime.now().isoformat(),
+                upload_date,
                 text_preview,
                 thumbnail_path,
             ),

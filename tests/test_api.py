@@ -7,6 +7,7 @@ import io
 import json
 import sqlite3
 import zipfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pypdf
@@ -176,6 +177,74 @@ class TestUploadEndpoint:
             files={"file": (bad_name, io.BytesIO(b"%PDF-1.4"), "application/pdf")},
         )
         assert response.status_code == 400
+
+
+class TestUploadStorageLayout:
+    """Uploads land under uploads/<Category>/<Year>/ with a relative DB path."""
+
+    def test_upload_is_filed_by_category_and_year(
+        self, client, test_db, sample_pdf_bytes, monkeypatch
+    ):
+        import backend.main as main
+
+        monkeypatch.setattr(
+            main, "process_document", lambda text, filename: (["test"], "Invoice")
+        )
+        monkeypatch.setattr(main, "generate_thumbnail", lambda path, name: None)
+
+        response = client.post(
+            "/upload",
+            files={"file": ("layout.pdf", sample_pdf_bytes, "application/pdf")},
+        )
+        assert response.status_code == 200
+
+        conn = sqlite3.connect(test_db)
+        file_path = conn.execute(
+            "SELECT file_path FROM documents WHERE id = ?", (response.json()["id"],)
+        ).fetchone()[0]
+        conn.close()
+
+        assert file_path.startswith("Invoice/")
+        assert "/" in file_path and not Path(file_path).is_absolute()
+        assert (main.UPLOAD_DIR / file_path).exists()
+
+    def test_staging_directory_is_left_empty(
+        self, client, test_db, sample_pdf_bytes, monkeypatch
+    ):
+        import backend.main as main
+        from backend import storage
+
+        monkeypatch.setattr(
+            main, "process_document", lambda text, filename: (["test"], "Invoice")
+        )
+        monkeypatch.setattr(main, "generate_thumbnail", lambda path, name: None)
+
+        client.post(
+            "/upload",
+            files={"file": ("staging.pdf", sample_pdf_bytes, "application/pdf")},
+        )
+
+        staging = storage.staging_dir(main.UPLOAD_DIR)
+        assert not staging.exists() or not any(staging.iterdir())
+
+    def test_uploaded_document_is_downloadable(
+        self, client, test_db, sample_pdf_bytes, monkeypatch
+    ):
+        import backend.main as main
+
+        monkeypatch.setattr(
+            main, "process_document", lambda text, filename: (["test"], "Receipt")
+        )
+        monkeypatch.setattr(main, "generate_thumbnail", lambda path, name: None)
+
+        doc_id = client.post(
+            "/upload",
+            files={"file": ("round.pdf", sample_pdf_bytes, "application/pdf")},
+        ).json()["id"]
+
+        download = client.get(f"/download/{doc_id}")
+        assert download.status_code == 200
+        assert download.content[:4] == b"%PDF"
 
 
 class TestDocumentsEndpoint:

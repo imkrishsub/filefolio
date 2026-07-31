@@ -381,3 +381,31 @@ class TestSyncServiceNotCoroutine:
         t.start()
         t.join(timeout=5)
         assert not raised, f"scan_folder raised RuntimeError: {raised[0]}"
+
+
+class TestSyncStorageLayout:
+    def test_synced_pdf_is_filed_by_category_and_year(
+        self, test_db, temp_test_dir, sample_pdf_bytes, monkeypatch
+    ):
+        import sqlite3
+
+        import backend.main as main
+
+        monkeypatch.setattr(
+            main, "process_document", lambda text, filename: (["test"], "Contract")
+        )
+        monkeypatch.setattr(main, "generate_thumbnail", lambda path, name: None)
+
+        source_dir = temp_test_dir / "watched"
+        source_dir.mkdir(exist_ok=True)
+        source_pdf = source_dir / "synced.pdf"
+        source_pdf.write_bytes(sample_pdf_bytes)
+
+        assert main.sync_service._process_pdf(source_pdf, folder_id=1) is True
+
+        conn = sqlite3.connect(test_db)
+        file_path = conn.execute("SELECT file_path FROM documents").fetchone()[0]
+        conn.close()
+
+        assert file_path.startswith("Contract/")
+        assert (main.UPLOAD_DIR / file_path).exists()

@@ -9,6 +9,7 @@ so callers (the app, the sync service, tests) stay in control of the location.
 from __future__ import annotations
 
 import logging
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -88,3 +89,56 @@ def resolve(file_path: str, upload_dir: Path) -> Path:
     if not destination.resolve().is_relative_to(upload_dir.resolve()):
         raise ValueError(f"Stored path escapes the upload directory: {file_path!r}")
     return destination
+
+
+def _unique_destination(destination: Path) -> Path:
+    """First free name at or next to ``destination`` ('name.pdf', 'name_1.pdf', ...)."""
+    if not destination.exists():
+        return destination
+    counter = 1
+    while True:
+        candidate = destination.parent / f"{destination.stem}_{counter}{destination.suffix}"
+        if not candidate.exists():
+            return candidate
+        counter += 1
+
+
+def place(
+    staging_path: Path,
+    upload_dir: Path,
+    category,
+    upload_date,
+    stored_filename,
+) -> tuple[Path, str]:
+    """Move a staged upload into its category folder.
+
+    Returns:
+        The final absolute path and the final filename, which differs from
+        ``stored_filename`` when the name had to be uniquified.
+    """
+    upload_dir = Path(upload_dir)
+    destination = upload_dir / relative_path_for(category, upload_date, stored_filename)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination = _unique_destination(destination)
+    shutil.move(str(staging_path), str(destination))
+    return destination, destination.name
+
+
+def move_to_category(file_path: str, upload_dir: Path, new_category, upload_date) -> str:
+    """Move an already-stored document to a different category folder.
+
+    The year is taken from ``upload_date`` so a document does not drift into the
+    current year when it is edited.
+
+    Returns:
+        The new path relative to ``upload_dir``, POSIX-style.
+    """
+    upload_dir = Path(upload_dir)
+    current = resolve(file_path, upload_dir)
+    destination = upload_dir / relative_path_for(new_category, upload_date, current.name)
+    if destination == current:
+        return destination.relative_to(upload_dir).as_posix()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination = _unique_destination(destination)
+    shutil.move(str(current), str(destination))
+    return destination.relative_to(upload_dir).as_posix()

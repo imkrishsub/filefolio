@@ -65,3 +65,87 @@ class TestResolve:
 class TestStagingDir:
     def test_staging_lives_inside_the_upload_dir(self, tmp_path):
         assert storage.staging_dir(tmp_path) == tmp_path / ".staging"
+
+
+class TestPlace:
+    def test_moves_the_staged_file_into_category_and_year(self, tmp_path):
+        staged = storage.staging_dir(tmp_path)
+        staged.mkdir(parents=True)
+        source = staged / "20260731_101500_bill.pdf"
+        source.write_bytes(b"%PDF-1.4 test")
+
+        final_path, final_name = storage.place(
+            source, tmp_path, "Invoice", "2026-07-31T10:15:00", source.name
+        )
+
+        assert final_path == tmp_path / "Invoice" / "2026" / "20260731_101500_bill.pdf"
+        assert final_name == "20260731_101500_bill.pdf"
+        assert final_path.read_bytes() == b"%PDF-1.4 test"
+        assert not source.exists()
+
+    def test_uniquifies_when_the_destination_name_is_taken(self, tmp_path):
+        existing = tmp_path / "Invoice" / "2026" / "20260731_101500_bill.pdf"
+        existing.parent.mkdir(parents=True)
+        existing.write_bytes(b"%PDF-1.4 first")
+
+        staged = storage.staging_dir(tmp_path)
+        staged.mkdir(parents=True)
+        source = staged / "20260731_101500_bill.pdf"
+        source.write_bytes(b"%PDF-1.4 second")
+
+        final_path, final_name = storage.place(
+            source, tmp_path, "Invoice", "2026-07-31T10:15:00", source.name
+        )
+
+        assert final_name == "20260731_101500_bill_1.pdf"
+        assert final_path.read_bytes() == b"%PDF-1.4 second"
+        assert existing.read_bytes() == b"%PDF-1.4 first"
+
+    def test_unknown_category_is_filed_under_other(self, tmp_path):
+        staged = storage.staging_dir(tmp_path)
+        staged.mkdir(parents=True)
+        source = staged / "doc.pdf"
+        source.write_bytes(b"%PDF-1.4")
+
+        final_path, _ = storage.place(source, tmp_path, None, "2026-07-31T10:15:00", "doc.pdf")
+
+        assert final_path == tmp_path / "Other" / "2026" / "doc.pdf"
+
+
+class TestMoveToCategory:
+    def test_moves_to_the_new_category_keeping_the_original_year(self, tmp_path):
+        current = tmp_path / "Invoice" / "2025" / "doc.pdf"
+        current.parent.mkdir(parents=True)
+        current.write_bytes(b"%PDF-1.4")
+
+        new_rel = storage.move_to_category(
+            "Invoice/2025/doc.pdf", tmp_path, "Receipt", "2025-11-02T09:00:00"
+        )
+
+        assert new_rel == "Receipt/2025/doc.pdf"
+        assert (tmp_path / "Receipt" / "2025" / "doc.pdf").exists()
+        assert not current.exists()
+
+    def test_same_category_is_a_no_op(self, tmp_path):
+        current = tmp_path / "Invoice" / "2025" / "doc.pdf"
+        current.parent.mkdir(parents=True)
+        current.write_bytes(b"%PDF-1.4")
+
+        new_rel = storage.move_to_category(
+            "Invoice/2025/doc.pdf", tmp_path, "Invoice", "2025-11-02T09:00:00"
+        )
+
+        assert new_rel == "Invoice/2025/doc.pdf"
+        assert current.exists()
+
+    def test_moves_a_legacy_absolute_path_into_the_structure(self, tmp_path):
+        legacy = tmp_path / "doc.pdf"
+        legacy.write_bytes(b"%PDF-1.4")
+
+        new_rel = storage.move_to_category(
+            str(legacy), tmp_path, "Tax", "2024-03-04T08:00:00"
+        )
+
+        assert new_rel == "Tax/2024/doc.pdf"
+        assert (tmp_path / "Tax" / "2024" / "doc.pdf").exists()
+        assert not legacy.exists()

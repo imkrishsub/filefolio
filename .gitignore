@@ -56,3 +56,4 @@ frontend/static/style.css.backup
 
 # Superpowers working files (specs, plans) — local only
 docs/superpowers/
+.superpowers/

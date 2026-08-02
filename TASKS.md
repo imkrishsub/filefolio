@@ -141,11 +141,12 @@
   - Priority: medium
   - Notes: Add options to apply visual filters (brightness, contrast, grayscale, sepia) to improve readability of scanned or low-quality documents in the preview modal
 
-- [ ] Create organized folder structure for stored PDFs
+- [x] Create organized folder structure for stored PDFs
   - ID: T021
   - Date added: 2025-10-27
+  - Date completed: 2026-08-01
   - Priority: low
-  - Notes: Group by category/year instead of flat uploads folder
+  - Notes: PDFs now stored under uploads/<Category>/<Year>/. New backend/storage.py owns path computation, staging, placement, recategorise moves, and an idempotent migration. documents.file_path switched to a POSIX relative path; storage.resolve() still accepts legacy absolute values. Migration runs in FastAPI startup and after restore. Backup walks the tree and skips staging directory. Test count 124→182.
 
 - [ ] Export functionality (CSV, JSON)
   - ID: T022

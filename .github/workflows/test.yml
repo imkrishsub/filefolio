@@ -12,7 +12,9 @@ jobs:
 
     strategy:
       matrix:
-        python-version: ['3.8', '3.9', '3.10', '3.11']
+        # 3.9 is the floor: backend.storage uses Path.is_relative_to on the hot
+        # read path, which does not exist before 3.9. README states 3.10+.
+        python-version: ['3.9', '3.10', '3.11']
 
     steps:
     - name: Checkout code

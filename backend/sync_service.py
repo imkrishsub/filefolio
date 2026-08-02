@@ -8,6 +8,7 @@ using the existing document processing pipeline.
 import hashlib
 import json
 import logging
+import shutil
 import sqlite3
 import time
 from datetime import datetime
@@ -370,10 +371,12 @@ class SyncFolderService:
         try:
             # Import here to avoid circular dependencies
             try:
+                from backend import storage
                 from backend.main import generate_thumbnail
                 from backend.main import get_db_connection as get_main_db_connection
                 from backend.main import process_document
             except ModuleNotFoundError:
+                import storage
                 from main import (
                     generate_thumbnail,
                     process_document,
@@ -408,50 +411,82 @@ class SyncFolderService:
                 )
                 return False
 
-            # Copy file to upload directory
+            # Copy into staging; the destination folder depends on the category,
+            # which is not known until the document has been processed.
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             stored_filename = f"{timestamp}_{file_path.name}"
-            dest_path = self.upload_dir / stored_filename
+            staging = storage.staging_dir(self.upload_dir)
+            staging.mkdir(parents=True, exist_ok=True)
+            dest_path = staging / stored_filename
 
-            # Copy file
             with file_path.open("rb") as src, dest_path.open("wb") as dst:
-                dst.write(src.read())
+                shutil.copyfileobj(src, dst)
 
-            # Extract text from PDF
+            # Everything until place() succeeds runs with the PDF in the hidden
+            # staging directory, which nothing else garbage-collects. Any failure in
+            # between -- process_document, Ollama, a failed move -- must take the
+            # staged copy with it, otherwise it accumulates there invisibly.
+            staged_path = dest_path
             try:
-                reader = pypdf.PdfReader(dest_path)
-                full_text = ""
-                for page in reader.pages[:20]:
-                    full_text += page.extract_text() + " "
+                # Extract text from PDF
+                try:
+                    reader = pypdf.PdfReader(dest_path)
+                    full_text = ""
+                    for page in reader.pages[:20]:
+                        full_text += page.extract_text() + " "
 
-                # OCR fallback for scanned documents
-                if len(full_text.strip()) < 50:
-                    logger.info("PDF appears scanned, attempting OCR...")
-                    try:
-                        images = convert_from_path(dest_path, dpi=300)
-                        ocr_text = ""
-                        for image in images[:20]:
-                            page_text = pytesseract.image_to_string(
-                                image, lang="eng+deu"
-                            )
-                            ocr_text += page_text + " "
+                    # OCR fallback for scanned documents
+                    if len(full_text.strip()) < 50:
+                        logger.info("PDF appears scanned, attempting OCR...")
+                        try:
+                            images = convert_from_path(dest_path, dpi=300)
+                            ocr_text = ""
+                            for image in images[:20]:
+                                page_text = pytesseract.image_to_string(
+                                    image, lang="eng+deu"
+                                )
+                                ocr_text += page_text + " "
 
-                        if len(ocr_text.strip()) > len(full_text.strip()):
-                            full_text = ocr_text
-                            logger.info(f"OCR successful: {len(full_text)} characters")
-                    except Exception as ocr_error:
-                        logger.warning(f"OCR failed: {ocr_error}")
+                            if len(ocr_text.strip()) > len(full_text.strip()):
+                                full_text = ocr_text
+                                logger.info(
+                                    f"OCR successful: {len(full_text)} characters"
+                                )
+                        except Exception as ocr_error:
+                            logger.warning(f"OCR failed: {ocr_error}")
 
-                text_preview = full_text[:2000]
-            except Exception as e:
-                text_preview = f"Error extracting text: {str(e)}"
-                logger.error(f"Text extraction failed: {e}")
+                    text_preview = full_text[:2000]
+                except Exception as e:
+                    text_preview = f"Error extracting text: {str(e)}"
+                    logger.error(f"Text extraction failed: {e}")
 
-            # Generate thumbnail
+                # AI processing for tags and category
+                tags, category = process_document(text_preview, file_path.name)
+
+                # Move out of staging into uploads/<Category>/<Year>/.
+                # _move_into_place falls back to shutil.move, which raises
+                # shutil.Error; that subclasses OSError, so it is named here only
+                # to make the intent explicit.
+                upload_date = datetime.now().isoformat()
+                try:
+                    dest_path, stored_filename = storage.place(
+                        dest_path,
+                        self.upload_dir,
+                        category,
+                        upload_date,
+                        stored_filename,
+                    )
+                except (OSError, shutil.Error) as exc:
+                    staged_path.unlink(missing_ok=True)
+                    logger.error(f"Could not store {file_path.name}: {exc}")
+                    return False
+            except BaseException:
+                # Never reached once place() has succeeded: the staged copy is gone.
+                staged_path.unlink(missing_ok=True)
+                raise
+
+            # Generate thumbnail from the final location
             thumbnail_path = generate_thumbnail(dest_path, stored_filename)
-
-            # AI processing for tags and category
-            tags, category = process_document(text_preview, file_path.name)
 
             # Save to database
             conn = get_main_db_connection()
@@ -468,11 +503,11 @@ class SyncFolderService:
                         file_path.name,
                         stored_filename,
                         None,
-                        str(dest_path),
+                        dest_path.relative_to(self.upload_dir).as_posix(),
                         file_hash,
                         json.dumps(tags),
                         category,
-                        datetime.now().isoformat(),
+                        upload_date,
                         text_preview,
                         thumbnail_path,
                     ),

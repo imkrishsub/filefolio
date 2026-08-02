@@ -17,6 +17,7 @@ Key design decisions:
 import hashlib
 import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -40,6 +41,8 @@ from PIL import Image
 from pydantic import BaseModel
 
 app = FastAPI()
+
+logger = logging.getLogger(__name__)
 
 # File size limits
 MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100 MB — single PDF upload
@@ -159,6 +162,12 @@ def init_db():
     conn.close()
 
 
+try:
+    from backend import storage
+except ModuleNotFoundError:
+    import storage
+
+
 init_db()
 
 
@@ -174,7 +183,8 @@ sync_service = SyncFolderService(DB_PATH, UPLOAD_DIR, THUMBNAILS_DIR)
 # Startup and shutdown events
 @app.on_event("startup")
 async def startup_event():
-    """Start the sync folder service when the app starts."""
+    """Run pending migrations and start the sync folder service."""
+    storage.migrate_uploads_to_category_folders(get_db_connection, UPLOAD_DIR)
     sync_service.start()
 
 
@@ -276,11 +286,17 @@ def reindex_documents_content():
 
         for doc_id, file_path, orig_name, auto_name, tags, category in documents:
             try:
-                if not Path(file_path).exists():
+                try:
+                    resolved_path = storage.resolve(file_path, UPLOAD_DIR)
+                except ValueError:
+                    print(f"Skipping {file_path} - path outside the upload directory")
+                    continue
+
+                if not resolved_path.exists():
                     print(f"Skipping {file_path} - file not found")
                     continue
 
-                reader = pypdf.PdfReader(file_path)
+                reader = pypdf.PdfReader(resolved_path)
                 full_text = ""
                 # Extract from all pages (up to 20 for performance)
                 for page in reader.pages[:20]:
@@ -290,7 +306,7 @@ def reindex_documents_content():
                 if len(full_text.strip()) < 50:
                     print(f"  Document {doc_id} appears scanned, attempting OCR...")
                     try:
-                        images = convert_from_path(file_path, dpi=300)
+                        images = convert_from_path(resolved_path, dpi=300)
                         ocr_text = ""
                         for image in images[:20]:
                             page_text = pytesseract.image_to_string(
@@ -374,6 +390,12 @@ app.mount("/thumbnails", StaticFiles(directory=THUMBNAILS_DIR), name="thumbnails
 
 # ── Request / response models ────────────────────────────────────────────────
 
+# Must stay in step with storage.VALID_CATEGORIES, which decides the folder a
+# document is filed under. A category accepted here but unknown to storage would be
+# written to the database while the PDF landed under Other/, so
+# test_storage_categories_match_the_api_contract guards the two against drift.
+# A Literal cannot be built from the tuple without losing static checking, hence the
+# duplication.
 ValidCategory = Literal[
     "Invoice",
     "Receipt",
@@ -429,10 +451,13 @@ async def upload_pdf(file: UploadFile = File(...)):
     if not safe_filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 
-    # Save file temporarily
+    # Stage the upload: the category, and therefore the destination folder, is not
+    # known until the text has been extracted and processed.
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     stored_filename = f"{timestamp}_{safe_filename}"
-    file_path = UPLOAD_DIR / stored_filename
+    staging = storage.staging_dir(UPLOAD_DIR)
+    staging.mkdir(parents=True, exist_ok=True)
+    file_path = staging / stored_filename
 
     # Stream to disk, enforcing size limit and calculating SHA-256 hash in one pass
     sha256_hash = hashlib.sha256()
@@ -459,83 +484,106 @@ async def upload_pdf(file: UploadFile = File(...)):
 
     file_hash = sha256_hash.hexdigest()
 
-    if bytes_written == 0:
-        file_path.unlink(missing_ok=True)
-        raise HTTPException(
-            status_code=400, detail="Empty file. Please upload a non-empty PDF."
-        )
-
-    # Check for duplicates
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT id, original_filename, upload_date FROM documents WHERE file_hash = ?",
-        (file_hash,),
-    )
-    duplicate = cursor.fetchone()
-    conn.close()
-
-    if duplicate:
-        # Delete the newly uploaded file since it's a duplicate
-        file_path.unlink()
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Duplicate file detected. This file was already uploaded as"
-                f" '{duplicate[1]}' on {duplicate[2][:10]}"
-            ),
-        )
-
-    # Extract text from PDF for search indexing
+    # Everything from here until place() succeeds runs with the PDF sitting in the
+    # hidden staging directory, which nothing else garbage-collects: it is excluded
+    # from backups and from the migration's recovery search. Any failure in between
+    # -- a database error, get_existing_tags(), Ollama, a failed move -- must take
+    # the staged file with it, so the whole stretch is wrapped in a cleanup handler.
+    staged_path = file_path
     try:
-        reader = pypdf.PdfReader(file_path)
-        full_text = ""
-        # Extract from all pages (up to 20 for performance)
-        for page in reader.pages[:20]:
-            full_text += page.extract_text() + " "
+        if bytes_written == 0:
+            raise HTTPException(
+                status_code=400, detail="Empty file. Please upload a non-empty PDF."
+            )
 
-        # If text extraction yielded little or no text, try OCR
-        if len(full_text.strip()) < 50:
-            print("PDF appears to be scanned or has minimal text, attempting OCR...")
-            try:
-                # Convert PDF pages to images and run OCR
-                images = convert_from_path(file_path, dpi=300)
-                ocr_text = ""
-                for i, image in enumerate(images[:20]):  # Limit to 20 pages
-                    page_text = pytesseract.image_to_string(image, lang="eng+deu")
-                    ocr_text += page_text + " "
-                    print(f"OCR extracted {len(page_text)} chars from page {i+1}")
-
-                if len(ocr_text.strip()) > len(full_text.strip()):
-                    full_text = ocr_text
-                    print(
-                        f"OCR successful: extracted {len(full_text)} total characters"
-                    )
-            except Exception as ocr_error:
-                print(f"OCR failed: {ocr_error}")
-
-        # Store first 2000 chars for preview and full text for search
-        text_preview = full_text[:2000]
-    except pypdf.errors.FileNotDecryptedError:
-        file_path.unlink(missing_ok=True)
-        raise HTTPException(
-            status_code=400,
-            detail="PDF is password-protected and cannot be processed.",
+        # Check for duplicates
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, original_filename, upload_date FROM documents WHERE file_hash = ?",
+            (file_hash,),
         )
-    except pypdf.errors.PyPdfError:
-        file_path.unlink(missing_ok=True)
-        raise HTTPException(
-            status_code=400,
-            detail="File appears to be corrupted or is not a valid PDF.",
-        )
-    except Exception as e:
-        text_preview = f"Error extracting text: {str(e)}"
+        duplicate = cursor.fetchone()
+        conn.close()
+
+        if duplicate:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Duplicate file detected. This file was already uploaded as"
+                    f" '{duplicate[1]}' on {duplicate[2][:10]}"
+                ),
+            )
+
+        # Extract text from PDF for search indexing
+        try:
+            reader = pypdf.PdfReader(file_path)
+            full_text = ""
+            # Extract from all pages (up to 20 for performance)
+            for page in reader.pages[:20]:
+                full_text += page.extract_text() + " "
+
+            # If text extraction yielded little or no text, try OCR
+            if len(full_text.strip()) < 50:
+                print(
+                    "PDF appears to be scanned or has minimal text, attempting OCR..."
+                )
+                try:
+                    # Convert PDF pages to images and run OCR
+                    images = convert_from_path(file_path, dpi=300)
+                    ocr_text = ""
+                    for i, image in enumerate(images[:20]):  # Limit to 20 pages
+                        page_text = pytesseract.image_to_string(image, lang="eng+deu")
+                        ocr_text += page_text + " "
+                        print(f"OCR extracted {len(page_text)} chars from page {i+1}")
+
+                    if len(ocr_text.strip()) > len(full_text.strip()):
+                        full_text = ocr_text
+                        print(
+                            f"OCR successful: extracted {len(full_text)} total characters"
+                        )
+                except Exception as ocr_error:
+                    print(f"OCR failed: {ocr_error}")
+
+            # Store first 2000 chars for preview and full text for search
+            text_preview = full_text[:2000]
+        except pypdf.errors.FileNotDecryptedError:
+            raise HTTPException(
+                status_code=400,
+                detail="PDF is password-protected and cannot be processed.",
+            )
+        except pypdf.errors.PyPdfError:
+            raise HTTPException(
+                status_code=400,
+                detail="File appears to be corrupted or is not a valid PDF.",
+            )
+        except Exception as e:
+            text_preview = f"Error extracting text: {str(e)}"
+
+        # Process document for AI tagging (but don't rename)
+        tags, category = process_document(text_preview, safe_filename)
+
+        # Move out of staging into uploads/<Category>/<Year>/. The filename may be
+        # uniquified here, so the thumbnail is generated afterwards from the final
+        # name. _move_into_place falls back to shutil.move, which raises shutil.Error;
+        # that subclasses OSError, so it is named here only to make the intent explicit.
+        upload_date = datetime.now().isoformat()
+        try:
+            file_path, stored_filename = storage.place(
+                file_path, UPLOAD_DIR, category, upload_date, stored_filename
+            )
+        except (OSError, shutil.Error) as exc:
+            raise HTTPException(
+                status_code=500, detail=f"Could not store the uploaded file: {exc}"
+            )
+    except BaseException:
+        # place() either consumed the staged file or left it behind; anything else
+        # failing leaves it behind too. Never reached once place() has succeeded.
+        staged_path.unlink(missing_ok=True)
+        raise
 
     # Generate thumbnail
     thumbnail_path = generate_thumbnail(file_path, stored_filename)
-
-    # Process document for AI tagging (but don't rename)
-    tags, category = process_document(text_preview, safe_filename)
 
     # Save to database
     conn = get_db_connection()
@@ -552,11 +600,11 @@ async def upload_pdf(file: UploadFile = File(...)):
                 safe_filename,
                 stored_filename,
                 None,  # No auto-renaming
-                str(file_path),
+                file_path.relative_to(UPLOAD_DIR).as_posix(),
                 file_hash,
                 json.dumps(tags),
                 category,
-                datetime.now().isoformat(),
+                upload_date,
                 text_preview,
                 thumbnail_path,
             ),
@@ -768,21 +816,10 @@ Respond in JSON format:
         # Parse response
         response_text = response["message"]["content"]
 
-        # Define valid categories
-        VALID_CATEGORIES = [
-            "Invoice",
-            "Receipt",
-            "Contract",
-            "Letter",
-            "Report",
-            "Form",
-            "Statement",
-            "Legal",
-            "Medical",
-            "Tax",
-            "Insurance",
-            "Other",
-        ]
+        # Valid categories come from storage, which also decides the folder a
+        # document is filed under: a third local copy could drift and put the
+        # database and the disk layout permanently out of step.
+        VALID_CATEGORIES = storage.VALID_CATEGORIES
 
         # Extract JSON from response (handle markdown code blocks)
         json_match = re.search(r"\{[\s\S]*\}", response_text)
@@ -1077,7 +1114,15 @@ async def get_document(doc_id: int):
     if not row:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    return FileResponse(row[0])
+    try:
+        resolved_path = storage.resolve(row[0], UPLOAD_DIR)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid stored path")
+
+    if not resolved_path.exists():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    return FileResponse(resolved_path)
 
 
 @app.get("/download/{doc_id}")
@@ -1096,12 +1141,17 @@ async def download_single_document(doc_id: int):
 
     file_path, original_filename = row[0], row[1]
 
-    if not Path(file_path).exists():
+    try:
+        resolved_path = storage.resolve(file_path, UPLOAD_DIR)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid stored path")
+
+    if not resolved_path.exists():
         raise HTTPException(status_code=404, detail="File not found on disk")
 
     encoded_filename = urllib.parse.quote(original_filename)
     return FileResponse(
-        file_path,
+        resolved_path,
         media_type="application/pdf",
         headers={
             "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
@@ -1125,6 +1175,7 @@ async def update_document(doc_id: int, updates: UpdateRequest):
     # Build update query dynamically
     update_fields = []
     params = []
+    new_file_path = None
 
     if updates.auto_filename is not None:
         update_fields.append("auto_filename = ?")
@@ -1138,6 +1189,21 @@ async def update_document(doc_id: int, updates: UpdateRequest):
         update_fields.append("category = ?")
         params.append(updates.category)
 
+        # Keep the file where its category says it should be. The year comes from
+        # the original upload date so an edit does not move it into the current year.
+        try:
+            new_file_path = storage.move_to_category(
+                row["file_path"], UPLOAD_DIR, updates.category, row["upload_date"]
+            )
+        except (OSError, ValueError) as exc:
+            conn.close()
+            print(f"Could not move document {doc_id} to new category: {exc}")
+            raise HTTPException(
+                status_code=500, detail="Could not move the document file"
+            )
+        update_fields.append("file_path = ?")
+        params.append(new_file_path)
+
     if not update_fields:
         conn.close()
         raise HTTPException(status_code=400, detail="No valid fields to update")
@@ -1145,8 +1211,36 @@ async def update_document(doc_id: int, updates: UpdateRequest):
     params.append(doc_id)
     query = f"UPDATE documents SET {', '.join(update_fields)} WHERE id = ?"
 
-    cursor.execute(query, params)
-    conn.commit()
+    if new_file_path is not None:
+        try:
+            cursor.execute(query, params)
+            conn.commit()
+        except Exception as exc:
+            # The file already moved. Put it back at the exact path the row still
+            # names -- not a recomputed destination, which could uniquify differently
+            # than the forward move and leave the row pointing at nothing.
+            try:
+                storage.restore_to(new_file_path, UPLOAD_DIR, row["file_path"])
+            except OSError as rollback_exc:
+                print(
+                    f"Rolled-back move failed for document {doc_id}; row points at "
+                    f"{row['file_path']} but the file is at {new_file_path}: {rollback_exc}"
+                )
+            else:
+                restored_path = storage.resolve(row["file_path"], UPLOAD_DIR)
+                if not restored_path.is_file():
+                    print(
+                        f"CRITICAL: rollback for document {doc_id} reported success "
+                        f"but {row['file_path']} is not on disk at {restored_path}; "
+                        f"the file may still be at {new_file_path}"
+                    )
+            conn.close()
+            print(f"Could not update document {doc_id}: {exc}")
+            raise HTTPException(status_code=500, detail="Could not update the document")
+    else:
+        cursor.execute(query, params)
+        conn.commit()
+
     conn.close()
 
     return {"success": True, "message": "Document updated successfully"}
@@ -1188,8 +1282,10 @@ async def delete_document(doc_id: int):
 
     # Delete physical files
     try:
-        if file_path and Path(file_path).exists():
-            Path(file_path).unlink()
+        if file_path:
+            resolved_path = storage.resolve(file_path, UPLOAD_DIR)
+            if resolved_path.exists():
+                resolved_path.unlink()
 
         if thumbnail_path:
             # Extract filename from URL path
@@ -1229,9 +1325,13 @@ async def download_multiple_documents(request: DownloadRequest):
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
         for doc_id, file_path, original_filename, stored_filename in rows:
-            if Path(file_path).exists():
+            try:
+                resolved_path = storage.resolve(file_path, UPLOAD_DIR)
+            except ValueError:
+                continue
+            if resolved_path.exists():
                 # Use original filename in the ZIP
-                zip_file.write(file_path, original_filename)
+                zip_file.write(resolved_path, original_filename)
 
     zip_buffer.seek(0)
 
@@ -1437,8 +1537,21 @@ async def create_backup(background_tasks: BackgroundTasks):
 
             # Add all PDFs
             if UPLOAD_DIR.exists():
-                for pdf_file in UPLOAD_DIR.glob("*.pdf"):
-                    zip_file.write(pdf_file, f"uploads/{pdf_file.name}")
+                for pdf_file in UPLOAD_DIR.rglob("*.pdf"):
+                    relative = pdf_file.relative_to(UPLOAD_DIR)
+                    # Skip uploads that are still being written.
+                    if storage.STAGING_DIRNAME in relative.parts:
+                        continue
+                    # Skip anything reached through a symlink: rglob follows
+                    # symlinked directories, which could pull an unrelated
+                    # tree (or the file itself, if it is a symlink) into
+                    # every future backup.
+                    if any(
+                        UPLOAD_DIR.joinpath(*relative.parts[: i + 1]).is_symlink()
+                        for i in range(len(relative.parts))
+                    ):
+                        continue
+                    zip_file.write(pdf_file, f"uploads/{relative.as_posix()}")
 
             # Add all thumbnails
             if THUMBNAILS_DIR.exists():
@@ -1574,10 +1687,26 @@ async def restore_backup(file: UploadFile = File(...)):
         # Restart sync service
         sync_service.start()
 
+        # A backup taken elsewhere carries absolute paths that mean nothing here;
+        # re-organise so every restored row points at a real file. This is
+        # best-effort: a restore that otherwise succeeded should not be reported
+        # as failed just because the migration pass could not run (e.g. the
+        # restored database is unreadable for some other reason). The caller is
+        # told via migration_warning so a failure here is not silent.
+        migration_warning = None
+        try:
+            storage.migrate_uploads_to_category_folders(get_db_connection, UPLOAD_DIR)
+        except Exception as exc:
+            logger.warning("Post-restore upload migration did not complete: %s", exc)
+            migration_warning = (
+                f"Restore succeeded, but reorganising restored files failed: {exc}"
+            )
+
         return {
             "success": True,
             "message": "Backup restored successfully",
             "metadata": metadata,
+            "migration_warning": migration_warning,
             "stats": {
                 "pdfs_restored": len(pdf_files),
                 "thumbnails_restored": len(thumb_files),

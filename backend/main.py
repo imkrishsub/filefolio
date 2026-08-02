@@ -1231,9 +1231,7 @@ async def update_document(doc_id: int, updates: UpdateRequest):
                     )
             conn.close()
             print(f"Could not update document {doc_id}: {exc}")
-            raise HTTPException(
-                status_code=500, detail="Could not update the document"
-            )
+            raise HTTPException(status_code=500, detail="Could not update the document")
     else:
         cursor.execute(query, params)
         conn.commit()

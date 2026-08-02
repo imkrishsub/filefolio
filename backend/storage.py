@@ -109,7 +109,8 @@ def _reserve_destination(destination: Path) -> Path:
         candidate = (
             destination
             if counter == 0
-            else destination.parent / f"{destination.stem}_{counter}{destination.suffix}"
+            else destination.parent
+            / f"{destination.stem}_{counter}{destination.suffix}"
         )
         try:
             fd = os.open(str(candidate), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
@@ -164,7 +165,9 @@ def place(
     return reserved, reserved.name
 
 
-def move_to_category(file_path: str, upload_dir: Path, new_category, upload_date) -> str:
+def move_to_category(
+    file_path: str, upload_dir: Path, new_category, upload_date
+) -> str:
     """Move an already-stored document to a different category folder.
 
     The year is taken from ``upload_date`` so a document does not drift into the
@@ -175,7 +178,9 @@ def move_to_category(file_path: str, upload_dir: Path, new_category, upload_date
     """
     upload_dir = Path(upload_dir)
     current = resolve(file_path, upload_dir)
-    destination = upload_dir / relative_path_for(new_category, upload_date, current.name)
+    destination = upload_dir / relative_path_for(
+        new_category, upload_date, current.name
+    )
     if destination == current:
         return destination.relative_to(upload_dir).as_posix()
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -235,7 +240,10 @@ def _locate_source(row, upload_dir: Path):
         return flat
 
     for found in upload_dir.rglob(name):
-        if found.is_file() and STAGING_DIRNAME not in found.relative_to(upload_dir).parts:
+        if (
+            found.is_file()
+            and STAGING_DIRNAME not in found.relative_to(upload_dir).parts
+        ):
             return found
     return None
 

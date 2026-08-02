@@ -17,6 +17,7 @@ Key design decisions:
 import hashlib
 import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -40,6 +41,8 @@ from PIL import Image
 from pydantic import BaseModel
 
 app = FastAPI()
+
+logger = logging.getLogger(__name__)
 
 # File size limits
 MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100 MB — single PDF upload
@@ -166,7 +169,6 @@ except ModuleNotFoundError:
 
 
 init_db()
-storage.migrate_uploads_to_category_folders(get_db_connection, UPLOAD_DIR)
 
 
 # Initialize sync service
@@ -181,7 +183,8 @@ sync_service = SyncFolderService(DB_PATH, UPLOAD_DIR, THUMBNAILS_DIR)
 # Startup and shutdown events
 @app.on_event("startup")
 async def startup_event():
-    """Start the sync folder service when the app starts."""
+    """Run pending migrations and start the sync folder service."""
+    storage.migrate_uploads_to_category_folders(get_db_connection, UPLOAD_DIR)
     sync_service.start()
 
 
@@ -1536,6 +1539,15 @@ async def create_backup(background_tasks: BackgroundTasks):
                     # Skip uploads that are still being written.
                     if storage.STAGING_DIRNAME in relative.parts:
                         continue
+                    # Skip anything reached through a symlink: rglob follows
+                    # symlinked directories, which could pull an unrelated
+                    # tree (or the file itself, if it is a symlink) into
+                    # every future backup.
+                    if any(
+                        UPLOAD_DIR.joinpath(*relative.parts[: i + 1]).is_symlink()
+                        for i in range(len(relative.parts))
+                    ):
+                        continue
                     zip_file.write(pdf_file, f"uploads/{relative.as_posix()}")
 
             # Add all thumbnails
@@ -1676,20 +1688,22 @@ async def restore_backup(file: UploadFile = File(...)):
         # re-organise so every restored row points at a real file. This is
         # best-effort: a restore that otherwise succeeded should not be reported
         # as failed just because the migration pass could not run (e.g. the
-        # restored database is unreadable for some other reason).
+        # restored database is unreadable for some other reason). The caller is
+        # told via migration_warning so a failure here is not silent.
+        migration_warning = None
         try:
             storage.migrate_uploads_to_category_folders(get_db_connection, UPLOAD_DIR)
         except Exception as exc:
-            import logging as _logging
-
-            _logging.getLogger(__name__).warning(
-                "Post-restore upload migration did not complete: %s", exc
+            logger.warning("Post-restore upload migration did not complete: %s", exc)
+            migration_warning = (
+                f"Restore succeeded, but reorganising restored files failed: {exc}"
             )
 
         return {
             "success": True,
             "message": "Backup restored successfully",
             "metadata": metadata,
+            "migration_warning": migration_warning,
             "stats": {
                 "pdfs_restored": len(pdf_files),
                 "thumbnails_restored": len(thumb_files),

@@ -1162,6 +1162,136 @@ class TestStartupMigration:
         assert not flat.exists()
 
 
+class TestRestoreRunsMigration:
+    """POST /restore must reorganise restored documents, and must not fail
+    the restore when that reorganisation itself fails."""
+
+    def test_restore_reorganises_legacy_documents(
+        self, client, tmp_path, sample_pdf_bytes, monkeypatch
+    ):
+        """A restored row with a stale absolute file_path ends up organised
+        into its category/year folder, proving the restore-time wiring (not
+        just the migration function in isolation)."""
+        import backend.main as main
+
+        base_dir = tmp_path / "restore_migration_base"
+        (base_dir / "data").mkdir(parents=True)
+        (base_dir / "uploads").mkdir()
+        (base_dir / "thumbnails").mkdir()
+        monkeypatch.setattr(main, "BASE_DIR", base_dir)
+        monkeypatch.setattr(main, "DATA_DIR", base_dir / "data")
+        monkeypatch.setattr(main, "DB_PATH", base_dir / "data" / "documents.db")
+        monkeypatch.setattr(main, "UPLOAD_DIR", base_dir / "uploads")
+
+        # Build a real, minimal documents database with a legacy row whose
+        # file_path is an absolute path from another machine.
+        source_db_path = base_dir / "source.db"
+        conn = sqlite3.connect(source_db_path)
+        conn.execute(
+            """
+            CREATE TABLE documents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                original_filename TEXT,
+                stored_filename TEXT,
+                file_path TEXT,
+                category TEXT,
+                upload_date TEXT
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO documents (original_filename, stored_filename, file_path, "
+            "category, upload_date) VALUES (?, ?, ?, ?, ?)",
+            (
+                "legacy.pdf",
+                "20240101_000000_legacy.pdf",
+                "/some/other/machine/uploads/20240101_000000_legacy.pdf",
+                "Legal",
+                "2024-01-01T00:00:00",
+            ),
+        )
+        conn.commit()
+        conn.close()
+        db_bytes = source_db_path.read_bytes()
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("data/documents.db", db_bytes)
+            zf.writestr("uploads/20240101_000000_legacy.pdf", sample_pdf_bytes)
+            zf.writestr(
+                "backup_metadata.json",
+                json.dumps(
+                    {
+                        "system": "FileFolio",
+                        "version": "1.0",
+                        "backup_date": "2026-01-01T00:00:00",
+                    }
+                ),
+            )
+        buf.seek(0)
+
+        response = client.post(
+            "/restore", files={"file": ("backup.zip", buf, "application/zip")}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["migration_warning"] is None
+        assert (
+            base_dir / "uploads" / "Legal" / "2024" / "20240101_000000_legacy.pdf"
+        ).exists()
+
+    def test_restore_reports_migration_failure_without_failing_the_restore(
+        self, client, tmp_path, monkeypatch
+    ):
+        """If the post-restore migration pass raises, the restore itself
+        still reports success, but migration_warning tells the caller."""
+        import backend.main as main
+        from backend import storage
+
+        base_dir = tmp_path / "restore_migration_failure_base"
+        (base_dir / "data").mkdir(parents=True)
+        (base_dir / "uploads").mkdir()
+        (base_dir / "thumbnails").mkdir()
+        monkeypatch.setattr(main, "BASE_DIR", base_dir)
+        monkeypatch.setattr(main, "DATA_DIR", base_dir / "data")
+        monkeypatch.setattr(main, "DB_PATH", base_dir / "data" / "documents.db")
+
+        def raise_migration(*args, **kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(
+            storage, "migrate_uploads_to_category_folders", raise_migration
+        )
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr(
+                "data/documents.db",
+                b"SQLite format 3\x00" + b"\x00" * 84,
+            )
+            zf.writestr(
+                "backup_metadata.json",
+                json.dumps(
+                    {
+                        "system": "FileFolio",
+                        "version": "1.0",
+                        "backup_date": "2026-01-01T00:00:00",
+                    }
+                ),
+            )
+        buf.seek(0)
+
+        response = client.post(
+            "/restore", files={"file": ("backup.zip", buf, "application/zip")}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["migration_warning"] is not None
+        assert "boom" in data["migration_warning"]
+
+
 class TestDuplicateDetectionRace:
     """
     T010: The pre-check SELECT and the INSERT are in separate transactions.

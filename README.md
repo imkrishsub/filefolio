@@ -49,6 +49,26 @@ Paperless-ngx is the most popular self-hosted alternative. Here's how they compa
   - Ubuntu/Debian: `apt-get install tesseract-ocr`
   - Windows: Download from [Tesseract releases](https://github.com/UB-Mannheim/tesseract/wiki)
 
+## How files are stored
+
+Uploaded PDFs are filed by category and year:
+
+```
+uploads/
+  Invoice/
+    2026/
+      20260731_101500_bill.pdf
+  Receipt/
+    2025/
+      20251102_090000_lidl.pdf
+```
+
+Changing a document's category in the interface moves the file to the matching folder.
+An existing flat `uploads/` directory is reorganised automatically the next time FileFolio
+starts.
+
+Thumbnails stay flat in `thumbnails/` — they are generated artifacts, not files you browse.
+
 ## Quick start
 
 ### Docker (recommended)

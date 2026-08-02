@@ -422,49 +422,67 @@ class SyncFolderService:
             with file_path.open("rb") as src, dest_path.open("wb") as dst:
                 shutil.copyfileobj(src, dst)
 
-            # Extract text from PDF
+            # Everything until place() succeeds runs with the PDF in the hidden
+            # staging directory, which nothing else garbage-collects. Any failure in
+            # between -- process_document, Ollama, a failed move -- must take the
+            # staged copy with it, otherwise it accumulates there invisibly.
+            staged_path = dest_path
             try:
-                reader = pypdf.PdfReader(dest_path)
-                full_text = ""
-                for page in reader.pages[:20]:
-                    full_text += page.extract_text() + " "
+                # Extract text from PDF
+                try:
+                    reader = pypdf.PdfReader(dest_path)
+                    full_text = ""
+                    for page in reader.pages[:20]:
+                        full_text += page.extract_text() + " "
 
-                # OCR fallback for scanned documents
-                if len(full_text.strip()) < 50:
-                    logger.info("PDF appears scanned, attempting OCR...")
-                    try:
-                        images = convert_from_path(dest_path, dpi=300)
-                        ocr_text = ""
-                        for image in images[:20]:
-                            page_text = pytesseract.image_to_string(
-                                image, lang="eng+deu"
-                            )
-                            ocr_text += page_text + " "
+                    # OCR fallback for scanned documents
+                    if len(full_text.strip()) < 50:
+                        logger.info("PDF appears scanned, attempting OCR...")
+                        try:
+                            images = convert_from_path(dest_path, dpi=300)
+                            ocr_text = ""
+                            for image in images[:20]:
+                                page_text = pytesseract.image_to_string(
+                                    image, lang="eng+deu"
+                                )
+                                ocr_text += page_text + " "
 
-                        if len(ocr_text.strip()) > len(full_text.strip()):
-                            full_text = ocr_text
-                            logger.info(f"OCR successful: {len(full_text)} characters")
-                    except Exception as ocr_error:
-                        logger.warning(f"OCR failed: {ocr_error}")
+                            if len(ocr_text.strip()) > len(full_text.strip()):
+                                full_text = ocr_text
+                                logger.info(
+                                    f"OCR successful: {len(full_text)} characters"
+                                )
+                        except Exception as ocr_error:
+                            logger.warning(f"OCR failed: {ocr_error}")
 
-                text_preview = full_text[:2000]
-            except Exception as e:
-                text_preview = f"Error extracting text: {str(e)}"
-                logger.error(f"Text extraction failed: {e}")
+                    text_preview = full_text[:2000]
+                except Exception as e:
+                    text_preview = f"Error extracting text: {str(e)}"
+                    logger.error(f"Text extraction failed: {e}")
 
-            # AI processing for tags and category
-            tags, category = process_document(text_preview, file_path.name)
+                # AI processing for tags and category
+                tags, category = process_document(text_preview, file_path.name)
 
-            # Move out of staging into uploads/<Category>/<Year>/
-            upload_date = datetime.now().isoformat()
-            try:
-                dest_path, stored_filename = storage.place(
-                    dest_path, self.upload_dir, category, upload_date, stored_filename
-                )
-            except OSError as exc:
-                dest_path.unlink(missing_ok=True)
-                logger.error(f"Could not store {file_path.name}: {exc}")
-                return False
+                # Move out of staging into uploads/<Category>/<Year>/. shutil.Error is
+                # not an OSError subclass and _move_into_place falls back to
+                # shutil.move, so both have to be caught here.
+                upload_date = datetime.now().isoformat()
+                try:
+                    dest_path, stored_filename = storage.place(
+                        dest_path,
+                        self.upload_dir,
+                        category,
+                        upload_date,
+                        stored_filename,
+                    )
+                except (OSError, shutil.Error) as exc:
+                    staged_path.unlink(missing_ok=True)
+                    logger.error(f"Could not store {file_path.name}: {exc}")
+                    return False
+            except BaseException:
+                # Never reached once place() has succeeded: the staged copy is gone.
+                staged_path.unlink(missing_ok=True)
+                raise
 
             # Generate thumbnail from the final location
             thumbnail_path = generate_thumbnail(dest_path, stored_filename)

@@ -390,6 +390,12 @@ app.mount("/thumbnails", StaticFiles(directory=THUMBNAILS_DIR), name="thumbnails
 
 # ── Request / response models ────────────────────────────────────────────────
 
+# Must stay in step with storage.VALID_CATEGORIES, which decides the folder a
+# document is filed under. A category accepted here but unknown to storage would be
+# written to the database while the PDF landed under Other/, so
+# test_storage_categories_match_the_api_contract guards the two against drift.
+# A Literal cannot be built from the tuple without losing static checking, hence the
+# duplication.
 ValidCategory = Literal[
     "Invoice",
     "Receipt",
@@ -478,93 +484,103 @@ async def upload_pdf(file: UploadFile = File(...)):
 
     file_hash = sha256_hash.hexdigest()
 
-    if bytes_written == 0:
-        file_path.unlink(missing_ok=True)
-        raise HTTPException(
-            status_code=400, detail="Empty file. Please upload a non-empty PDF."
-        )
-
-    # Check for duplicates
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT id, original_filename, upload_date FROM documents WHERE file_hash = ?",
-        (file_hash,),
-    )
-    duplicate = cursor.fetchone()
-    conn.close()
-
-    if duplicate:
-        # Delete the newly uploaded file since it's a duplicate
-        file_path.unlink()
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Duplicate file detected. This file was already uploaded as"
-                f" '{duplicate[1]}' on {duplicate[2][:10]}"
-            ),
-        )
-
-    # Extract text from PDF for search indexing
+    # Everything from here until place() succeeds runs with the PDF sitting in the
+    # hidden staging directory, which nothing else garbage-collects: it is excluded
+    # from backups and from the migration's recovery search. Any failure in between
+    # -- a database error, get_existing_tags(), Ollama, a failed move -- must take
+    # the staged file with it, so the whole stretch is wrapped in a cleanup handler.
+    staged_path = file_path
     try:
-        reader = pypdf.PdfReader(file_path)
-        full_text = ""
-        # Extract from all pages (up to 20 for performance)
-        for page in reader.pages[:20]:
-            full_text += page.extract_text() + " "
+        if bytes_written == 0:
+            raise HTTPException(
+                status_code=400, detail="Empty file. Please upload a non-empty PDF."
+            )
 
-        # If text extraction yielded little or no text, try OCR
-        if len(full_text.strip()) < 50:
-            print("PDF appears to be scanned or has minimal text, attempting OCR...")
-            try:
-                # Convert PDF pages to images and run OCR
-                images = convert_from_path(file_path, dpi=300)
-                ocr_text = ""
-                for i, image in enumerate(images[:20]):  # Limit to 20 pages
-                    page_text = pytesseract.image_to_string(image, lang="eng+deu")
-                    ocr_text += page_text + " "
-                    print(f"OCR extracted {len(page_text)} chars from page {i+1}")
-
-                if len(ocr_text.strip()) > len(full_text.strip()):
-                    full_text = ocr_text
-                    print(
-                        f"OCR successful: extracted {len(full_text)} total characters"
-                    )
-            except Exception as ocr_error:
-                print(f"OCR failed: {ocr_error}")
-
-        # Store first 2000 chars for preview and full text for search
-        text_preview = full_text[:2000]
-    except pypdf.errors.FileNotDecryptedError:
-        file_path.unlink(missing_ok=True)
-        raise HTTPException(
-            status_code=400,
-            detail="PDF is password-protected and cannot be processed.",
+        # Check for duplicates
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, original_filename, upload_date FROM documents WHERE file_hash = ?",
+            (file_hash,),
         )
-    except pypdf.errors.PyPdfError:
-        file_path.unlink(missing_ok=True)
-        raise HTTPException(
-            status_code=400,
-            detail="File appears to be corrupted or is not a valid PDF.",
-        )
-    except Exception as e:
-        text_preview = f"Error extracting text: {str(e)}"
+        duplicate = cursor.fetchone()
+        conn.close()
 
-    # Process document for AI tagging (but don't rename)
-    tags, category = process_document(text_preview, safe_filename)
+        if duplicate:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Duplicate file detected. This file was already uploaded as"
+                    f" '{duplicate[1]}' on {duplicate[2][:10]}"
+                ),
+            )
 
-    # Move out of staging into uploads/<Category>/<Year>/. The filename may be
-    # uniquified here, so the thumbnail is generated afterwards from the final name.
-    upload_date = datetime.now().isoformat()
-    try:
-        file_path, stored_filename = storage.place(
-            file_path, UPLOAD_DIR, category, upload_date, stored_filename
-        )
-    except OSError as exc:
-        Path(file_path).unlink(missing_ok=True)
-        raise HTTPException(
-            status_code=500, detail=f"Could not store the uploaded file: {exc}"
-        )
+        # Extract text from PDF for search indexing
+        try:
+            reader = pypdf.PdfReader(file_path)
+            full_text = ""
+            # Extract from all pages (up to 20 for performance)
+            for page in reader.pages[:20]:
+                full_text += page.extract_text() + " "
+
+            # If text extraction yielded little or no text, try OCR
+            if len(full_text.strip()) < 50:
+                print(
+                    "PDF appears to be scanned or has minimal text, attempting OCR..."
+                )
+                try:
+                    # Convert PDF pages to images and run OCR
+                    images = convert_from_path(file_path, dpi=300)
+                    ocr_text = ""
+                    for i, image in enumerate(images[:20]):  # Limit to 20 pages
+                        page_text = pytesseract.image_to_string(image, lang="eng+deu")
+                        ocr_text += page_text + " "
+                        print(f"OCR extracted {len(page_text)} chars from page {i+1}")
+
+                    if len(ocr_text.strip()) > len(full_text.strip()):
+                        full_text = ocr_text
+                        print(
+                            f"OCR successful: extracted {len(full_text)} total characters"
+                        )
+                except Exception as ocr_error:
+                    print(f"OCR failed: {ocr_error}")
+
+            # Store first 2000 chars for preview and full text for search
+            text_preview = full_text[:2000]
+        except pypdf.errors.FileNotDecryptedError:
+            raise HTTPException(
+                status_code=400,
+                detail="PDF is password-protected and cannot be processed.",
+            )
+        except pypdf.errors.PyPdfError:
+            raise HTTPException(
+                status_code=400,
+                detail="File appears to be corrupted or is not a valid PDF.",
+            )
+        except Exception as e:
+            text_preview = f"Error extracting text: {str(e)}"
+
+        # Process document for AI tagging (but don't rename)
+        tags, category = process_document(text_preview, safe_filename)
+
+        # Move out of staging into uploads/<Category>/<Year>/. The filename may be
+        # uniquified here, so the thumbnail is generated afterwards from the final
+        # name. shutil.Error is not an OSError subclass, and _move_into_place falls
+        # back to shutil.move, so both have to be caught here.
+        upload_date = datetime.now().isoformat()
+        try:
+            file_path, stored_filename = storage.place(
+                file_path, UPLOAD_DIR, category, upload_date, stored_filename
+            )
+        except (OSError, shutil.Error) as exc:
+            raise HTTPException(
+                status_code=500, detail=f"Could not store the uploaded file: {exc}"
+            )
+    except BaseException:
+        # place() either consumed the staged file or left it behind; anything else
+        # failing leaves it behind too. Never reached once place() has succeeded.
+        staged_path.unlink(missing_ok=True)
+        raise
 
     # Generate thumbnail
     thumbnail_path = generate_thumbnail(file_path, stored_filename)
@@ -800,21 +816,10 @@ Respond in JSON format:
         # Parse response
         response_text = response["message"]["content"]
 
-        # Define valid categories
-        VALID_CATEGORIES = [
-            "Invoice",
-            "Receipt",
-            "Contract",
-            "Letter",
-            "Report",
-            "Form",
-            "Statement",
-            "Legal",
-            "Medical",
-            "Tax",
-            "Insurance",
-            "Other",
-        ]
+        # Valid categories come from storage, which also decides the folder a
+        # document is filed under: a third local copy could drift and put the
+        # database and the disk layout permanently out of step.
+        VALID_CATEGORIES = storage.VALID_CATEGORIES
 
         # Extract JSON from response (handle markdown code blocks)
         json_match = re.search(r"\{[\s\S]*\}", response_text)

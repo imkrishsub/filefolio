@@ -54,13 +54,30 @@ class TestResolve:
     def test_relative_value_is_joined_onto_upload_dir(self, tmp_path):
         assert storage.resolve("Invoice/2026/bill.pdf", tmp_path) == tmp_path / "Invoice" / "2026" / "bill.pdf"
 
-    def test_legacy_absolute_value_is_returned_unchanged(self, tmp_path):
-        legacy = tmp_path.parent / "elsewhere" / "old.pdf"
+    def test_legacy_absolute_value_inside_the_upload_dir_is_returned_unchanged(
+        self, tmp_path
+    ):
+        """The pre-migration form -- an absolute path into the upload directory --
+        still resolves, so a row the migration skipped keeps working."""
+        legacy = tmp_path / "old.pdf"
         assert storage.resolve(str(legacy), tmp_path) == legacy
+
+    def test_absolute_value_outside_the_upload_dir_is_rejected(self, tmp_path):
+        """A stored path is not trusted input: a restored third-party backup can
+        carry any absolute file_path it likes, and honouring one outside the upload
+        directory would let the migration move, serve and delete arbitrary files."""
+        outside = tmp_path.parent / "elsewhere" / "old.pdf"
+        with pytest.raises(ValueError):
+            storage.resolve(str(outside), tmp_path)
 
     def test_traversal_is_rejected(self, tmp_path):
         with pytest.raises(ValueError):
             storage.resolve("../../etc/passwd", tmp_path)
+
+    def test_absolute_traversal_back_inside_is_accepted(self, tmp_path):
+        """Containment is decided after resolution, not by string prefix."""
+        inside = tmp_path / "Invoice" / ".." / "Invoice" / "2026" / "bill.pdf"
+        assert storage.resolve(str(inside), tmp_path) == inside
 
 
 class TestStagingDir:
@@ -280,6 +297,21 @@ def _insert(factory, stored_filename, file_path, category, upload_date):
     conn.close()
 
 
+def _pin_rglob_order(monkeypatch):
+    """Make the recursive search in _locate_source return matches in sorted order.
+
+    Real filesystem order is arbitrary, so a test that relies on a particular match
+    coming back first is otherwise flaky in both directions. Pinning it makes the
+    decoy deterministically the first match.
+    """
+    original_rglob = Path.rglob
+    monkeypatch.setattr(
+        Path,
+        "rglob",
+        lambda self, pattern: iter(sorted(original_rglob(self, pattern))),
+    )
+
+
 def _file_paths(factory):
     conn = factory()
     rows = [row["file_path"] for row in conn.execute("SELECT file_path FROM documents ORDER BY id")]
@@ -434,6 +466,89 @@ class TestMigration:
         assert _file_paths(factory) == ["Invoice/2026/doc.pdf"]
         assert organised.exists()
 
+    def test_a_row_sharing_a_stored_filename_does_not_steal_another_rows_file(
+        self, tmp_path, monkeypatch
+    ):
+        """Two rows can carry the same stored_filename (restored backups, a manual DB
+        edit). The rglob fallback matches on filename alone, so without a check that
+        the match belongs to *this* row, migrating the second row walks into the first
+        row's already-migrated folder and takes its file -- reported as a clean
+        success while the first row is left dangling."""
+        upload_dir = tmp_path / "uploads"
+        upload_dir.mkdir()
+
+        # Row 1: already organised, correctly recorded, and not to be touched.
+        row_one = upload_dir / "Invoice" / "2026" / "doc.pdf"
+        row_one.parent.mkdir(parents=True)
+        row_one.write_bytes(b"%PDF-1.4 row one")
+
+        # Row 2 shares the stored_filename. Its file already sits at its own
+        # destination but the UPDATE never landed, so file_path is still stale and
+        # the recursive fallback is what has to find it.
+        row_two = upload_dir / "Receipt" / "2026" / "doc.pdf"
+        row_two.parent.mkdir(parents=True)
+        row_two.write_bytes(b"%PDF-1.4 row two")
+
+        _, factory = _migration_db(tmp_path)
+        _insert(
+            factory, "doc.pdf", "Invoice/2026/doc.pdf", "Invoice", "2026-01-01T00:00:00"
+        )
+        _insert(
+            factory, "doc.pdf", "/old/machine/doc.pdf", "Receipt", "2026-01-01T00:00:00"
+        )
+
+        # "Invoice/..." sorts before "Receipt/...", so row 1's file is always the
+        # first recursive match. The point of the fix is that it must not matter.
+        _pin_rglob_order(monkeypatch)
+
+        stats = storage.migrate_uploads_to_category_folders(factory, upload_dir)
+
+        assert stats == {"moved": 0, "skipped": 2, "failed": 0}
+        assert row_one.read_bytes() == b"%PDF-1.4 row one"
+        assert row_two.read_bytes() == b"%PDF-1.4 row two"
+        assert _file_paths(factory) == [
+            "Invoice/2026/doc.pdf",
+            "Receipt/2026/doc.pdf",
+        ]
+
+    def test_a_zero_byte_placeholder_is_not_adopted_as_the_source(
+        self, tmp_path, monkeypatch
+    ):
+        """_reserve_destination creates a real zero-byte placeholder before
+        _move_into_place overwrites it; a hard kill between the two leaves an orphan
+        that nothing cleans up. The next pass must not adopt that empty file as the
+        row's content while the real PDF sits elsewhere unreferenced."""
+        upload_dir = tmp_path / "uploads"
+        upload_dir.mkdir()
+
+        # The orphaned placeholder left behind by an interrupted previous pass.
+        orphan = upload_dir / "Invoice" / "2026" / "doc.pdf"
+        orphan.parent.mkdir(parents=True)
+        orphan.write_bytes(b"")
+
+        # The real content, still flat, under a different name so the flat-location
+        # check in _locate_source cannot find it and the rglob fallback is used.
+        real = upload_dir / "Legal" / "doc.pdf"
+        real.parent.mkdir(parents=True)
+        real.write_bytes(b"%PDF-1.4 the real content")
+
+        _, factory = _migration_db(tmp_path)
+        _insert(
+            factory, "doc.pdf", "/old/machine/doc.pdf", "Invoice", "2026-01-01T00:00:00"
+        )
+
+        # "Invoice/..." sorts before "Legal/...", so the empty placeholder is always
+        # the first recursive match and has to be rejected on its own merits.
+        _pin_rglob_order(monkeypatch)
+
+        stats = storage.migrate_uploads_to_category_folders(factory, upload_dir)
+
+        assert stats == {"moved": 1, "skipped": 0, "failed": 0}
+        # The row points at the real content, not at the empty placeholder.
+        final = upload_dir / _file_paths(factory)[0]
+        assert final.read_bytes() == b"%PDF-1.4 the real content"
+        assert not real.exists()
+
     def test_commits_progress_per_row_so_an_interruption_does_not_lose_it(
         self, tmp_path, monkeypatch
     ):
@@ -453,10 +568,10 @@ class TestMigration:
 
         original_locate_source = storage._locate_source
 
-        def interrupt_on_second_row(row, upload_dir):
+        def interrupt_on_second_row(row, upload_dir, expected_destination=None):
             if row["stored_filename"] == "second.pdf":
                 raise KeyboardInterrupt("simulated interruption")
-            return original_locate_source(row, upload_dir)
+            return original_locate_source(row, upload_dir, expected_destination)
 
         monkeypatch.setattr(storage, "_locate_source", interrupt_on_second_row)
 

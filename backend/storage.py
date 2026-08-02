@@ -8,6 +8,7 @@ so callers (the app, the sync service, tests) stay in control of the location.
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import shutil
@@ -16,8 +17,11 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Kept in step with ValidCategory in backend.main; a value outside this set is filed
-# under FALLBACK_CATEGORY rather than creating an unexpected directory.
+# The single source of truth for the category set. backend.main mirrors it as the
+# ValidCategory Literal (a Literal cannot be built from this tuple without losing
+# static checking); test_storage_categories_match_the_api_contract guards the two
+# against drift. A value outside this set is filed under FALLBACK_CATEGORY rather
+# than creating an unexpected directory.
 VALID_CATEGORIES = (
     "Invoice",
     "Receipt",
@@ -77,16 +81,18 @@ def resolve(file_path: str, upload_dir: Path) -> Path:
     """Absolute path of a stored document.
 
     Accepts both the relative form written today and the absolute form written before
-    the category folders existed, so a row that migration skipped still resolves.
+    the category folders existed, so a row that migration skipped still resolves --
+    but an absolute value is only accepted when it resolves inside ``upload_dir``.
+
+    Containment is enforced on both forms because the stored value is not trusted
+    input: a restored third-party backup can carry any file_path it likes.
 
     Raises:
-        ValueError: if a relative value escapes ``upload_dir``.
+        ValueError: if the value escapes ``upload_dir`` once resolved.
     """
     upload_dir = Path(upload_dir)
     candidate = Path(str(file_path))
-    if candidate.is_absolute():
-        return candidate
-    destination = upload_dir / candidate
+    destination = candidate if candidate.is_absolute() else upload_dir / candidate
     if not destination.resolve().is_relative_to(upload_dir.resolve()):
         raise ValueError(f"Stored path escapes the upload directory: {file_path!r}")
     return destination
@@ -125,9 +131,11 @@ def _move_into_place(source: Path, reserved: Path) -> None:
     """Move ``source`` onto the placeholder at ``reserved``, replacing it atomically.
 
     ``os.replace`` is the primary mechanism: it overwrites the placeholder in one
-    atomic step. It raises ``OSError`` when ``source`` and ``reserved`` are on
-    different filesystems (errno ``EXDEV``), in which case ``shutil.move`` is used
-    instead, which falls back to a copy when a same-filesystem rename is not possible.
+    atomic step. It raises ``OSError`` with errno ``EXDEV`` when ``source`` and
+    ``reserved`` are on different filesystems, and only that case falls back to
+    ``shutil.move``, which copies when a same-filesystem rename is not possible.
+    Every other ``OSError`` (a missing source, a permission problem) propagates
+    directly rather than being retried pointlessly through ``shutil.move``.
 
     If the move fails for any reason, the placeholder created by
     ``_reserve_destination`` is removed before the exception propagates, so a failed
@@ -136,7 +144,9 @@ def _move_into_place(source: Path, reserved: Path) -> None:
     try:
         try:
             os.replace(str(source), str(reserved))
-        except OSError:
+        except OSError as exc:
+            if exc.errno != errno.EXDEV:
+                raise
             shutil.move(str(source), str(reserved))
     except Exception:
         if reserved.exists():
@@ -216,18 +226,44 @@ def restore_to(current_path: str, upload_dir: Path, original_file_path: str) -> 
     _move_into_place(current, destination)
 
 
-def _locate_source(row, upload_dir: Path):
+def _has_content(path: Path) -> bool:
+    """True if ``path`` is a file with a non-zero size.
+
+    Used to vet the weaker ``_locate_source`` fallbacks. ``_reserve_destination``
+    creates a real zero-byte placeholder before ``_move_into_place`` overwrites it, so
+    a process killed between the two leaves an orphan that nothing collects. Adopting
+    that orphan would leave the row pointing at an empty PDF while the real content
+    sits unreferenced -- silent data loss reported as a successful migration.
+    """
+    return path.is_file() and path.stat().st_size > 0
+
+
+def _locate_source(row, upload_dir: Path, expected_destination=None):
     """Find the file belonging to a document row, or None.
 
-    Tries the stored path, then the flat legacy location, then a recursive search by
-    name (which recovers a row whose move succeeded but whose UPDATE did not).
+    Tries the stored path, then the flat legacy location, then this row's own
+    ``expected_destination`` (which recovers a row whose move succeeded but whose
+    UPDATE did not), and only then a recursive search by name.
+
+    The recursive search is a last resort and deliberately weak evidence: it matches
+    on filename alone, so it can return a file belonging to a *different* row that
+    happens to share a stored_filename. Checking ``expected_destination`` first keeps
+    an already-migrated row from being adopted by a later namesake. Zero-byte matches
+    are rejected because ``_reserve_destination`` creates a zero-byte placeholder: a
+    process killed between reserving and moving leaves one behind, and adopting it
+    would point the row at an empty PDF while the real content sits unreferenced.
     """
     stored_path = row["file_path"]
     if stored_path:
-        candidate = Path(str(stored_path))
-        if not candidate.is_absolute():
-            candidate = upload_dir / candidate
-        if candidate.is_file():
+        # Via resolve(), so a stored path escaping upload_dir is refused here too.
+        # The migration physically moves what it finds, and a restored third-party
+        # backup can name any file it likes: honouring one would import that file
+        # into the library, after which it is served and deleted like any other.
+        try:
+            candidate = resolve(stored_path, upload_dir)
+        except ValueError:
+            candidate = None
+        if candidate is not None and candidate.is_file():
             return candidate
 
     name = row["stored_filename"]
@@ -239,10 +275,12 @@ def _locate_source(row, upload_dir: Path):
     if flat.is_file():
         return flat
 
+    if expected_destination is not None and _has_content(expected_destination):
+        return expected_destination
+
     for found in upload_dir.rglob(name):
-        if (
-            found.is_file()
-            and STAGING_DIRNAME not in found.relative_to(upload_dir).parts
+        if _has_content(found) and (
+            STAGING_DIRNAME not in found.relative_to(upload_dir).parts
         ):
             return found
     return None
@@ -259,14 +297,23 @@ def _migrate_row(conn, row, upload_dir: Path) -> bool:
         if not candidate.is_absolute() and (upload_dir / candidate).is_file():
             return False  # already organised
 
-    source = _locate_source(row, upload_dir)
+    # Computed before the source is located so _locate_source can prefer this row's
+    # own destination over a same-named file belonging to some other row.
+    name = row["stored_filename"]
+    expected_destination = (
+        upload_dir / relative_path_for(row["category"], row["upload_date"], name)
+        if name
+        else None
+    )
+
+    source = _locate_source(row, upload_dir, expected_destination)
     if source is None:
         raise FileNotFoundError(
             f"no file on disk for document {row['id']} ({row['stored_filename']!r})"
         )
 
-    destination = upload_dir / relative_path_for(
-        row["category"], row["upload_date"], row["stored_filename"] or source.name
+    destination = expected_destination or (
+        upload_dir / relative_path_for(row["category"], row["upload_date"], source.name)
     )
 
     # moved is conjunctive with the row actually being relocated: a row recovered by

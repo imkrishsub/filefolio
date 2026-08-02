@@ -5,6 +5,7 @@ Updated to match actual API implementation.
 
 import io
 import json
+import shutil
 import sqlite3
 import zipfile
 from pathlib import Path
@@ -1134,7 +1135,252 @@ class TestBackupIncludesNestedFiles:
         assert not any(storage.STAGING_DIRNAME in name for name in names)
 
 
+class TestStoredPathContainment:
+    """POST /restore accepts an arbitrary ZIP and trusts the restored database
+    completely. A single row whose file_path points outside uploads/ must not give
+    the app a handle on that file: storage.resolve is the one chokepoint, so the
+    endpoints reading it have to refuse rather than serve or delete it."""
+
+    def _seed(self, test_db, file_path):
+        conn = sqlite3.connect(test_db)
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO documents (original_filename, stored_filename, file_path, "
+            "category, upload_date) VALUES (?, ?, ?, ?, ?)",
+            ("secret.pdf", "secret.pdf", str(file_path), "Invoice", "2026-01-01"),
+        )
+        doc_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+        return doc_id
+
+    def test_document_outside_the_upload_dir_is_not_served(
+        self, client, test_db, tmp_path, sample_pdf_bytes
+    ):
+        outside = tmp_path / "outside.pdf"
+        outside.write_bytes(sample_pdf_bytes)
+        doc_id = self._seed(test_db, outside)
+
+        assert client.get(f"/document/{doc_id}").status_code == 400
+        assert client.get(f"/download/{doc_id}").status_code == 400
+        assert outside.exists()
+
+    def test_document_outside_the_upload_dir_is_not_deleted_from_disk(
+        self, client, test_db, tmp_path, sample_pdf_bytes
+    ):
+        """DELETE removes the row either way, but must not unlink a file it was
+        never entitled to touch."""
+        outside = tmp_path / "outside_delete.pdf"
+        outside.write_bytes(sample_pdf_bytes)
+        doc_id = self._seed(test_db, outside)
+
+        assert client.delete(f"/document/{doc_id}").status_code == 200
+        assert outside.exists()
+
+    def test_migration_does_not_pull_an_outside_file_into_the_library(
+        self, test_db, tmp_path, sample_pdf_bytes
+    ):
+        """The migration physically moves files. A restored row pointing outside
+        uploads/ must be reported failed and left alone, not imported."""
+        import backend.main as main
+        from backend import storage
+
+        outside = tmp_path / "outside_migrate.pdf"
+        outside.write_bytes(sample_pdf_bytes)
+        self._seed(test_db, outside)
+
+        stats = storage.migrate_uploads_to_category_folders(
+            main.get_db_connection, main.UPLOAD_DIR
+        )
+
+        assert stats["moved"] == 0
+        assert outside.exists()
+        assert not (main.UPLOAD_DIR / "Invoice" / "2026" / "outside_migrate.pdf").exists()
+
+
+class TestCategoryContract:
+    """The twelve categories exist in two places -- storage.VALID_CATEGORIES, which
+    decides the folder a PDF is filed under, and main.ValidCategory, which decides
+    what PUT /document/{id} accepts. Drift between them is silent and moves files:
+    a category accepted by the API but unknown to storage is written to the database
+    while the PDF lands under Other/, and the migration's fast path then treats that
+    row as organised forever."""
+
+    def test_storage_categories_match_the_api_contract(self):
+        from typing import get_args
+
+        import backend.main as main
+        from backend import storage
+
+        assert set(storage.VALID_CATEGORIES) == set(get_args(main.ValidCategory))
+
+    def test_process_document_accepts_every_contract_category(
+        self, test_db, monkeypatch
+    ):
+        """process_document used to carry a third private copy of the list. It now
+        reads storage.VALID_CATEGORIES; this asserts the behaviour that copy provided
+        -- every contract category survives normalisation instead of silently
+        degrading to Other."""
+        import backend.main as main
+        from backend import storage
+
+        for category in storage.VALID_CATEGORIES:
+            monkeypatch.setattr(
+                main.ollama,
+                "chat",
+                lambda *a, _c=category, **k: {
+                    "message": {
+                        "content": '{"category": "%s", "tags": ["alpha bravo"]}' % _c
+                    }
+                },
+            )
+            _, resolved = main.process_document("some text", "doc.pdf")
+            assert resolved == category
+
+    def test_a_category_outside_the_contract_degrades_to_other(
+        self, test_db, monkeypatch
+    ):
+        import backend.main as main
+
+        monkeypatch.setattr(
+            main.ollama,
+            "chat",
+            lambda *a, **k: {
+                "message": {
+                    "content": '{"category": "Rechnung", "tags": ["alpha bravo"]}'
+                }
+            },
+        )
+        _, resolved = main.process_document("some text", "doc.pdf")
+        assert resolved == "Other"
+
+
+class TestStagedUploadsAreNotLeaked:
+    """uploads/.staging/ is hidden, excluded from backups and excluded from the
+    migration's recovery search. A staged PDF that nothing removes is therefore
+    invisible and unbounded, so every failure between writing it and a successful
+    place() has to take it with it."""
+
+    @staticmethod
+    def _staged_files(upload_dir):
+        from backend import storage
+
+        staging = storage.staging_dir(upload_dir)
+        return sorted(p.name for p in staging.iterdir()) if staging.exists() else []
+
+    def test_upload_cleans_up_when_processing_raises(
+        self, client, test_db, sample_pdf_bytes, monkeypatch
+    ):
+        import backend.main as main
+
+        def boom(text, filename):
+            raise RuntimeError("simulated tagging failure")
+
+        monkeypatch.setattr(main, "process_document", boom)
+
+        with pytest.raises(RuntimeError):
+            client.post(
+                "/upload",
+                files={"file": ("leak.pdf", sample_pdf_bytes, "application/pdf")},
+            )
+
+        assert self._staged_files(main.UPLOAD_DIR) == []
+
+    def test_upload_cleans_up_when_the_move_raises_shutil_error(
+        self, client, test_db, sample_pdf_bytes, monkeypatch
+    ):
+        """shutil.Error is not an OSError subclass, and _move_into_place falls back to
+        shutil.move -- so an OSError-only guard at the call site lets it escape as an
+        unhandled 500 with the staged file still on disk."""
+        import backend.main as main
+        from backend import storage
+
+        monkeypatch.setattr(
+            main, "process_document", lambda text, filename: (["test"], "Invoice")
+        )
+
+        def boom(*args, **kwargs):
+            raise shutil.Error("simulated cross-device failure")
+
+        monkeypatch.setattr(storage, "place", boom)
+
+        response = client.post(
+            "/upload",
+            files={"file": ("leak2.pdf", sample_pdf_bytes, "application/pdf")},
+        )
+
+        assert response.status_code == 500
+        assert "Could not store the uploaded file" in response.json()["detail"]
+        assert self._staged_files(main.UPLOAD_DIR) == []
+
+    def test_sync_processing_cleans_up_when_processing_raises(
+        self, test_db, tmp_path, sample_pdf_bytes, monkeypatch
+    ):
+        import backend.main as main
+
+        def boom(text, filename):
+            raise RuntimeError("simulated tagging failure")
+
+        monkeypatch.setattr(main, "process_document", boom)
+
+        source = tmp_path / "incoming.pdf"
+        source.write_bytes(sample_pdf_bytes)
+
+        assert main.sync_service._process_pdf(source, 1) is False
+        assert self._staged_files(main.UPLOAD_DIR) == []
+
+    def test_sync_processing_cleans_up_on_shutil_error(
+        self, test_db, tmp_path, sample_pdf_bytes, monkeypatch
+    ):
+        import backend.main as main
+        from backend import storage
+
+        monkeypatch.setattr(
+            main, "process_document", lambda text, filename: (["test"], "Invoice")
+        )
+
+        def boom(*args, **kwargs):
+            raise shutil.Error("simulated cross-device failure")
+
+        monkeypatch.setattr(storage, "place", boom)
+
+        source = tmp_path / "incoming2.pdf"
+        source.write_bytes(sample_pdf_bytes)
+
+        assert main.sync_service._process_pdf(source, 1) is False
+        assert self._staged_files(main.UPLOAD_DIR) == []
+
+
 class TestStartupMigration:
+    def test_startup_event_runs_the_migration(self, test_db, monkeypatch):
+        """The migration must be wired into startup_event itself, not merely exist as
+        a callable: deleting that one line would break the feature for every existing
+        library with nothing else failing. Drives the real event handler rather than
+        calling storage.migrate_uploads_to_category_folders directly."""
+        import asyncio
+
+        import backend.main as main
+
+        # No watchdog threads: only the migration half of startup is under test.
+        monkeypatch.setattr(main.sync_service, "start", lambda: None)
+
+        flat = main.UPLOAD_DIR / "20240101_000000_startup.pdf"
+        flat.write_bytes(b"%PDF-1.4 legacy")
+
+        conn = sqlite3.connect(test_db)
+        conn.execute(
+            "INSERT INTO documents (original_filename, stored_filename, file_path, "
+            "category, upload_date) VALUES (?, ?, ?, ?, ?)",
+            ("startup.pdf", flat.name, str(flat), "Legal", "2024-01-01T00:00:00"),
+        )
+        conn.commit()
+        conn.close()
+
+        asyncio.run(main.startup_event())
+
+        assert (main.UPLOAD_DIR / "Legal" / "2024" / flat.name).exists()
+        assert not flat.exists()
+
     def test_flat_legacy_document_is_organised(self, test_db, temp_test_dir):
         import sqlite3
 
@@ -1389,12 +1635,19 @@ class TestReindexCrashSafe:
         import backend.main as main
         import pypdf
 
+        # A legacy-style absolute file_path, but inside UPLOAD_DIR: storage.resolve
+        # rejects stored paths that escape it, so a row pointing outside would be
+        # skipped before PdfReader is ever reached and the crash under test would
+        # never happen.
+        legacy_absolute = main.UPLOAD_DIR / "crash.pdf"
+        legacy_absolute.write_bytes(sample_pdf_file.read_bytes())
+
         conn = sqlite3.connect(test_db)
         conn.execute(
             "INSERT INTO documents"
             " (original_filename, stored_filename, file_path, auto_filename, tags, category, content_preview, upload_date)"
             " VALUES ('crash.pdf', 'crash.pdf', ?, 'crash.pdf', '[]', 'Test', '', '2026-01-01')",
-            (str(sample_pdf_file),),
+            (str(legacy_absolute),),
         )
         conn.commit()
         conn.close()

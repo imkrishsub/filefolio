@@ -1419,3 +1419,210 @@ class TestReindexCrashSafe:
         main.reindex_documents_content()
 
         assert self._trigger_names_in_db(test_db) == self._TRIGGER_NAMES
+
+
+class TestNestedFileLifecycle:
+    """Delete, bulk download, and restore against the nested Category/Year layout."""
+
+    def _upload(self, client, sample_pdf_bytes, monkeypatch, category, name):
+        import backend.main as main
+
+        monkeypatch.setattr(
+            main, "process_document", lambda text, filename: (["test"], category)
+        )
+        monkeypatch.setattr(main, "generate_thumbnail", lambda path, name_: None)
+        return client.post(
+            "/upload", files={"file": (name, sample_pdf_bytes, "application/pdf")}
+        ).json()["id"]
+
+    def test_delete_removes_the_nested_file(
+        self, client, test_db, sample_pdf_bytes, monkeypatch
+    ):
+        import backend.main as main
+
+        doc_id = self._upload(client, sample_pdf_bytes, monkeypatch, "Invoice", "del.pdf")
+
+        conn = sqlite3.connect(test_db)
+        file_path = conn.execute(
+            "SELECT file_path FROM documents WHERE id = ?", (doc_id,)
+        ).fetchone()[0]
+        conn.close()
+        assert (main.UPLOAD_DIR / file_path).exists()
+
+        assert client.delete(f"/document/{doc_id}").status_code == 200
+        assert not (main.UPLOAD_DIR / file_path).exists()
+
+    def test_bulk_download_spans_category_folders(
+        self, client, test_db, sample_pdf_bytes, monkeypatch
+    ):
+        from pypdf import PdfWriter
+
+        first = self._upload(client, sample_pdf_bytes, monkeypatch, "Invoice", "one.pdf")
+
+        # A second, distinct PDF so the two do not collide on the duplicate hash check.
+        writer = PdfWriter()
+        writer.add_blank_page(width=300, height=300)
+        other_bytes = io.BytesIO()
+        writer.write(other_bytes)
+        second = self._upload(
+            client, other_bytes.getvalue(), monkeypatch, "Receipt", "two.pdf"
+        )
+
+        response = client.post(
+            "/download/multiple", json={"document_ids": [first, second]}
+        )
+        assert response.status_code == 200
+
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            assert sorted(archive.namelist()) == ["one.pdf", "two.pdf"]
+
+    def test_restoring_a_flat_backup_organises_the_library(
+        self, client, tmp_path, sample_pdf_bytes, monkeypatch
+    ):
+        """A backup in the old flat format, holding documents in several
+        categories, restores and is then filed by category/year.
+
+        TestRestoreRunsMigration already covers a single legacy row with an
+        absolute file_path resolving after restore. This covers what that one
+        does not: several rows, in different categories, migrated in the same
+        restore pass -- and it patches BASE_DIR/DATA_DIR to a scratch
+        directory (as TestRestoreRunsMigration does) rather than relying on
+        the test_db fixture alone, because /restore extracts backup contents
+        relative to the real BASE_DIR, not UPLOAD_DIR -- using test_db/
+        temp_test_dir here without that patch would write into this
+        worktree's actual uploads/ and data/ directories.
+        """
+        import backend.main as main
+
+        base_dir = tmp_path / "flat_backup_restore_base"
+        (base_dir / "data").mkdir(parents=True)
+        (base_dir / "uploads").mkdir()
+        (base_dir / "thumbnails").mkdir()
+        monkeypatch.setattr(main, "BASE_DIR", base_dir)
+        monkeypatch.setattr(main, "DATA_DIR", base_dir / "data")
+        monkeypatch.setattr(main, "DB_PATH", base_dir / "data" / "documents.db")
+        monkeypatch.setattr(main, "UPLOAD_DIR", base_dir / "uploads")
+        monkeypatch.setattr(main, "THUMBNAILS_DIR", base_dir / "thumbnails")
+
+        # Build a flat-format backup by hand: uploads/<name>.pdf plus a database
+        # whose rows carry pre-migration file_path values from two categories.
+        legacy_db = tmp_path / "legacy.db"
+        conn = sqlite3.connect(legacy_db)
+        conn.execute(
+            """
+            CREATE TABLE documents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                original_filename TEXT NOT NULL,
+                stored_filename TEXT NOT NULL,
+                auto_filename TEXT,
+                file_path TEXT NOT NULL,
+                file_hash TEXT,
+                tags TEXT,
+                category TEXT,
+                upload_date TEXT NOT NULL,
+                content_preview TEXT,
+                thumbnail_path TEXT
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO documents (original_filename, stored_filename, file_path, "
+            "category, upload_date) VALUES (?, ?, ?, ?, ?)",
+            (
+                "old.pdf",
+                "20230405_120000_old.pdf",
+                "/other/machine/uploads/20230405_120000_old.pdf",
+                "Medical",
+                "2023-04-05T12:00:00",
+            ),
+        )
+        conn.execute(
+            "INSERT INTO documents (original_filename, stored_filename, file_path, "
+            "category, upload_date) VALUES (?, ?, ?, ?, ?)",
+            (
+                "receipt.pdf",
+                "20220110_090000_receipt.pdf",
+                "/other/machine/uploads/20220110_090000_receipt.pdf",
+                "Receipt",
+                "2022-01-10T09:00:00",
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        archive_bytes = io.BytesIO()
+        with zipfile.ZipFile(archive_bytes, "w") as archive:
+            archive.write(legacy_db, "data/documents.db")
+            archive.writestr("uploads/20230405_120000_old.pdf", sample_pdf_bytes)
+            archive.writestr("uploads/20220110_090000_receipt.pdf", sample_pdf_bytes)
+            archive.writestr("backup_metadata.json", '{"version": "1.0"}')
+        archive_bytes.seek(0)
+
+        response = client.post(
+            "/restore",
+            files={"file": ("backup.zip", archive_bytes.getvalue(), "application/zip")},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["migration_warning"] is None
+
+        assert (
+            base_dir / "uploads" / "Medical" / "2023" / "20230405_120000_old.pdf"
+        ).exists()
+        assert (
+            base_dir / "uploads" / "Receipt" / "2022" / "20220110_090000_receipt.pdf"
+        ).exists()
+
+
+class TestStagingIsCleanAfterRejectedUploads:
+    """Every /upload rejection path must leave uploads/.staging/ empty."""
+
+    def _staging_entries(self):
+        import backend.main as main
+        from backend import storage
+
+        staging = storage.staging_dir(main.UPLOAD_DIR)
+        return list(staging.iterdir()) if staging.exists() else []
+
+    def test_empty_file_leaves_no_staged_file(self, client, test_db):
+        response = client.post(
+            "/upload", files={"file": ("empty.pdf", b"", "application/pdf")}
+        )
+        assert response.status_code == 400
+        assert self._staging_entries() == []
+
+    def test_bad_magic_bytes_leaves_no_staged_file(self, client, test_db):
+        response = client.post(
+            "/upload", files={"file": ("fake.pdf", b"NOTAPDF" * 10, "application/pdf")}
+        )
+        assert response.status_code == 400
+        assert self._staging_entries() == []
+
+    def test_corrupt_pdf_leaves_no_staged_file(self, client, test_db):
+        response = client.post(
+            "/upload",
+            files={"file": ("corrupt.pdf", b"%PDF-1.4 truncated garbage", "application/pdf")},
+        )
+        assert response.status_code == 400
+        assert self._staging_entries() == []
+
+    def test_duplicate_upload_leaves_no_staged_file(
+        self, client, test_db, sample_pdf_bytes, monkeypatch
+    ):
+        import backend.main as main
+
+        monkeypatch.setattr(
+            main, "process_document", lambda text, filename: (["test"], "Invoice")
+        )
+        monkeypatch.setattr(main, "generate_thumbnail", lambda path, name: None)
+
+        first = client.post(
+            "/upload", files={"file": ("dup.pdf", sample_pdf_bytes, "application/pdf")}
+        )
+        assert first.status_code == 200
+
+        second = client.post(
+            "/upload", files={"file": ("dup.pdf", sample_pdf_bytes, "application/pdf")}
+        )
+        assert second.status_code == 409
+        assert self._staging_entries() == []

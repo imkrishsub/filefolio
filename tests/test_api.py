@@ -504,6 +504,96 @@ class TestRecategoriseMovesFile:
 
         assert before == after
 
+    def test_failed_move_leaves_the_row_and_file_untouched(
+        self, client, test_db, sample_pdf_bytes, monkeypatch
+    ):
+        """A disk-level failure during the move must not touch the database row."""
+        import backend.main as main
+
+        doc_id = self._upload(client, sample_pdf_bytes, monkeypatch, "Invoice", "failmove.pdf")
+
+        conn = sqlite3.connect(test_db)
+        old_category, old_path = conn.execute(
+            "SELECT category, file_path FROM documents WHERE id = ?", (doc_id,)
+        ).fetchone()
+        conn.close()
+
+        def raise_os_error(*args, **kwargs):
+            raise OSError("simulated disk failure")
+
+        monkeypatch.setattr(main.storage, "move_to_category", raise_os_error)
+
+        response = client.put(f"/document/{doc_id}", json={"category": "Receipt"})
+        assert response.status_code == 500
+
+        conn = sqlite3.connect(test_db)
+        category_after, path_after = conn.execute(
+            "SELECT category, file_path FROM documents WHERE id = ?", (doc_id,)
+        ).fetchone()
+        conn.close()
+
+        assert category_after == old_category
+        assert path_after == old_path
+        assert (main.UPLOAD_DIR / old_path).exists()
+
+    def test_failed_database_write_moves_the_file_back(
+        self, client, test_db, sample_pdf_bytes, monkeypatch
+    ):
+        """If the DB write fails after the file already moved, the move is undone."""
+        import backend.main as main
+
+        doc_id = self._upload(client, sample_pdf_bytes, monkeypatch, "Invoice", "rollback.pdf")
+
+        conn = sqlite3.connect(test_db)
+        old_category, old_path = conn.execute(
+            "SELECT category, file_path FROM documents WHERE id = ?", (doc_id,)
+        ).fetchone()
+        conn.close()
+
+        real_get_db_connection = main.get_db_connection
+
+        class FailingCursor:
+            def __init__(self, real_cursor):
+                self._real_cursor = real_cursor
+
+            def execute(self, query, params=None):
+                if query.strip().startswith("UPDATE documents SET"):
+                    raise sqlite3.OperationalError("database is locked")
+                if params is None:
+                    return self._real_cursor.execute(query)
+                return self._real_cursor.execute(query, params)
+
+            def __getattr__(self, name):
+                return getattr(self._real_cursor, name)
+
+        class FailingConnection:
+            def __init__(self, real_conn):
+                self._real_conn = real_conn
+
+            def cursor(self):
+                return FailingCursor(self._real_conn.cursor())
+
+            def __getattr__(self, name):
+                return getattr(self._real_conn, name)
+
+        def fake_get_db_connection():
+            return FailingConnection(real_get_db_connection())
+
+        monkeypatch.setattr(main, "get_db_connection", fake_get_db_connection)
+
+        response = client.put(f"/document/{doc_id}", json={"category": "Receipt"})
+        assert response.status_code == 500
+
+        conn = sqlite3.connect(test_db)
+        category_after, path_after = conn.execute(
+            "SELECT category, file_path FROM documents WHERE id = ?", (doc_id,)
+        ).fetchone()
+        conn.close()
+
+        assert category_after == old_category
+        assert path_after == old_path
+        assert (main.UPLOAD_DIR / old_path).exists()
+
 
 class TestDeleteEndpoint:
     """Tests for the DELETE /document/{id} endpoint."""

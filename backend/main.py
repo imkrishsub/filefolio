@@ -1165,6 +1165,7 @@ async def update_document(doc_id: int, updates: UpdateRequest):
     # Build update query dynamically
     update_fields = []
     params = []
+    new_file_path = None
 
     if updates.auto_filename is not None:
         update_fields.append("auto_filename = ?")
@@ -1186,8 +1187,9 @@ async def update_document(doc_id: int, updates: UpdateRequest):
             )
         except (OSError, ValueError) as exc:
             conn.close()
+            print(f"Could not move document {doc_id} to new category: {exc}")
             raise HTTPException(
-                status_code=500, detail=f"Could not move the document file: {exc}"
+                status_code=500, detail="Could not move the document file"
             )
         update_fields.append("file_path = ?")
         params.append(new_file_path)
@@ -1199,8 +1201,30 @@ async def update_document(doc_id: int, updates: UpdateRequest):
     params.append(doc_id)
     query = f"UPDATE documents SET {', '.join(update_fields)} WHERE id = ?"
 
-    cursor.execute(query, params)
-    conn.commit()
+    if new_file_path is not None:
+        try:
+            cursor.execute(query, params)
+            conn.commit()
+        except Exception as exc:
+            # The file already moved. Put it back so the row and the disk agree.
+            try:
+                storage.move_to_category(
+                    new_file_path, UPLOAD_DIR, row["category"], row["upload_date"]
+                )
+            except OSError as rollback_exc:
+                print(
+                    f"Rolled-back move failed for document {doc_id}; row points at "
+                    f"{row['file_path']} but the file is at {new_file_path}: {rollback_exc}"
+                )
+            conn.close()
+            print(f"Could not update document {doc_id}: {exc}")
+            raise HTTPException(
+                status_code=500, detail="Could not update the document"
+            )
+    else:
+        cursor.execute(query, params)
+        conn.commit()
+
     conn.close()
 
     return {"success": True, "message": "Document updated successfully"}

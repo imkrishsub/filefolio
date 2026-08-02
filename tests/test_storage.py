@@ -187,6 +187,62 @@ class TestMoveToCategory:
         assert not legacy.exists()
 
 
+class TestRestoreTo:
+    def test_round_trips_a_move_that_had_to_uniquify(self, tmp_path):
+        original = tmp_path / "Invoice" / "2026" / "doc.pdf"
+        original.parent.mkdir(parents=True)
+        original.write_bytes(b"%PDF-1.4 original")
+
+        # Occupy the natural destination name so the forward move must uniquify.
+        taken = tmp_path / "Receipt" / "2026" / "doc.pdf"
+        taken.parent.mkdir(parents=True)
+        taken.write_bytes(b"%PDF-1.4 someone else")
+
+        new_rel = storage.move_to_category(
+            "Invoice/2026/doc.pdf", tmp_path, "Receipt", "2026-01-01T00:00:00"
+        )
+        assert new_rel == "Receipt/2026/doc_1.pdf"
+        assert not original.exists()
+
+        storage.restore_to(new_rel, tmp_path, "Invoice/2026/doc.pdf")
+
+        assert original.exists()
+        assert original.read_bytes() == b"%PDF-1.4 original"
+        assert not (tmp_path / new_rel).exists()
+        # The file that was already occupying the uniquified name's sibling is
+        # untouched.
+        assert taken.read_bytes() == b"%PDF-1.4 someone else"
+
+    def test_same_path_is_a_no_op(self, tmp_path):
+        current = tmp_path / "Invoice" / "2026" / "doc.pdf"
+        current.parent.mkdir(parents=True)
+        current.write_bytes(b"%PDF-1.4")
+
+        storage.restore_to("Invoice/2026/doc.pdf", tmp_path, "Invoice/2026/doc.pdf")
+
+        assert current.exists()
+        assert current.read_bytes() == b"%PDF-1.4"
+
+    def test_raises_instead_of_relocating_when_original_path_is_occupied(self, tmp_path):
+        current = tmp_path / "Receipt" / "2026" / "doc_1.pdf"
+        current.parent.mkdir(parents=True)
+        current.write_bytes(b"%PDF-1.4 current")
+
+        occupied = tmp_path / "Invoice" / "2026" / "doc.pdf"
+        occupied.parent.mkdir(parents=True)
+        occupied.write_bytes(b"%PDF-1.4 occupant")
+
+        with pytest.raises(OSError):
+            storage.restore_to(
+                "Receipt/2026/doc_1.pdf", tmp_path, "Invoice/2026/doc.pdf"
+            )
+
+        # Neither file moved: no silent relocation to a different name.
+        assert current.exists()
+        assert current.read_bytes() == b"%PDF-1.4 current"
+        assert occupied.read_bytes() == b"%PDF-1.4 occupant"
+
+
 def _migration_db(tmp_path):
     """Minimal documents table plus a factory returning fresh connections."""
     db_path = tmp_path / "test.db"

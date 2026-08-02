@@ -1206,16 +1206,24 @@ async def update_document(doc_id: int, updates: UpdateRequest):
             cursor.execute(query, params)
             conn.commit()
         except Exception as exc:
-            # The file already moved. Put it back so the row and the disk agree.
+            # The file already moved. Put it back at the exact path the row still
+            # names -- not a recomputed destination, which could uniquify differently
+            # than the forward move and leave the row pointing at nothing.
             try:
-                storage.move_to_category(
-                    new_file_path, UPLOAD_DIR, row["category"], row["upload_date"]
-                )
+                storage.restore_to(new_file_path, UPLOAD_DIR, row["file_path"])
             except OSError as rollback_exc:
                 print(
                     f"Rolled-back move failed for document {doc_id}; row points at "
                     f"{row['file_path']} but the file is at {new_file_path}: {rollback_exc}"
                 )
+            else:
+                restored_path = storage.resolve(row["file_path"], UPLOAD_DIR)
+                if not restored_path.is_file():
+                    print(
+                        f"CRITICAL: rollback for document {doc_id} reported success "
+                        f"but {row['file_path']} is not on disk at {restored_path}; "
+                        f"the file may still be at {new_file_path}"
+                    )
             conn.close()
             print(f"Could not update document {doc_id}: {exc}")
             raise HTTPException(

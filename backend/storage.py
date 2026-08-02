@@ -184,6 +184,33 @@ def move_to_category(file_path: str, upload_dir: Path, new_category, upload_date
     return reserved.relative_to(upload_dir).as_posix()
 
 
+def restore_to(current_path: str, upload_dir: Path, original_file_path: str) -> None:
+    """Move a file back to an exact previously-recorded location.
+
+    Used to undo a placement when a later step fails. Unlike move_to_category, the
+    destination is the caller's recorded original path, not a recomputed one, so a
+    filename that was uniquified on the way out is restored under its original name.
+
+    Raises:
+        OSError: if the file cannot be restored, including when the original path is
+            no longer free.
+    """
+    upload_dir = Path(upload_dir)
+    current = resolve(current_path, upload_dir)
+    destination = resolve(original_file_path, upload_dir)
+    if destination == current:
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(str(destination), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError as exc:
+        raise OSError(
+            f"Cannot restore to {destination}: the original path is occupied"
+        ) from exc
+    os.close(fd)
+    _move_into_place(current, destination)
+
+
 def _locate_source(row, upload_dir: Path):
     """Find the file belonging to a document row, or None.
 

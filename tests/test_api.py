@@ -434,6 +434,44 @@ class TestUpdateEndpoint:
         assert response.status_code == 422
 
 
+def _failing_update_get_db_connection(real_get_db_connection):
+    """A get_db_connection replacement whose UPDATE documents SET ... fails.
+
+    Every other statement (the existence-check SELECT, direct verification queries,
+    etc.) passes through to a real connection untouched, so this simulates a DB write
+    failing (e.g. "database is locked") strictly at the point update_document commits.
+    """
+
+    class FailingCursor:
+        def __init__(self, real_cursor):
+            self._real_cursor = real_cursor
+
+        def execute(self, query, params=None):
+            if query.strip().startswith("UPDATE documents SET"):
+                raise sqlite3.OperationalError("database is locked")
+            if params is None:
+                return self._real_cursor.execute(query)
+            return self._real_cursor.execute(query, params)
+
+        def __getattr__(self, name):
+            return getattr(self._real_cursor, name)
+
+    class FailingConnection:
+        def __init__(self, real_conn):
+            self._real_conn = real_conn
+
+        def cursor(self):
+            return FailingCursor(self._real_conn.cursor())
+
+        def __getattr__(self, name):
+            return getattr(self._real_conn, name)
+
+    def fake_get_db_connection():
+        return FailingConnection(real_get_db_connection())
+
+    return fake_get_db_connection
+
+
 class TestRecategoriseMovesFile:
     def _upload(self, client, sample_pdf_bytes, monkeypatch, category, name):
         import backend.main as main
@@ -550,36 +588,11 @@ class TestRecategoriseMovesFile:
         ).fetchone()
         conn.close()
 
-        real_get_db_connection = main.get_db_connection
-
-        class FailingCursor:
-            def __init__(self, real_cursor):
-                self._real_cursor = real_cursor
-
-            def execute(self, query, params=None):
-                if query.strip().startswith("UPDATE documents SET"):
-                    raise sqlite3.OperationalError("database is locked")
-                if params is None:
-                    return self._real_cursor.execute(query)
-                return self._real_cursor.execute(query, params)
-
-            def __getattr__(self, name):
-                return getattr(self._real_cursor, name)
-
-        class FailingConnection:
-            def __init__(self, real_conn):
-                self._real_conn = real_conn
-
-            def cursor(self):
-                return FailingCursor(self._real_conn.cursor())
-
-            def __getattr__(self, name):
-                return getattr(self._real_conn, name)
-
-        def fake_get_db_connection():
-            return FailingConnection(real_get_db_connection())
-
-        monkeypatch.setattr(main, "get_db_connection", fake_get_db_connection)
+        monkeypatch.setattr(
+            main,
+            "get_db_connection",
+            _failing_update_get_db_connection(main.get_db_connection),
+        )
 
         response = client.put(f"/document/{doc_id}", json={"category": "Receipt"})
         assert response.status_code == 500
@@ -593,6 +606,75 @@ class TestRecategoriseMovesFile:
         assert category_after == old_category
         assert path_after == old_path
         assert (main.UPLOAD_DIR / old_path).exists()
+
+    def test_failed_database_write_after_a_uniquified_move_restores_the_exact_original_path(
+        self, client, test_db, sample_pdf_bytes, monkeypatch
+    ):
+        """Reproduces the case where the forward move had to uniquify: the rollback
+        must land the file back under its ORIGINAL name, not a recomputed one that
+        collides with the name the forward move actually used."""
+        import backend.main as main
+        from pypdf import PdfWriter
+
+        doc_a = self._upload(client, sample_pdf_bytes, monkeypatch, "Invoice", "collide.pdf")
+
+        # A different page size gives distinct bytes/hash so the upload isn't rejected
+        # as a duplicate of doc_a.
+        writer = PdfWriter()
+        writer.add_blank_page(width=300, height=300)
+        other_pdf_bytes = io.BytesIO()
+        writer.write(other_pdf_bytes)
+        other_pdf_bytes.seek(0)
+        doc_b = self._upload(
+            client, other_pdf_bytes.getvalue(), monkeypatch, "Receipt", "other.pdf"
+        )
+
+        conn = sqlite3.connect(test_db)
+        a_path = conn.execute(
+            "SELECT file_path FROM documents WHERE id = ?", (doc_a,)
+        ).fetchone()[0]
+        b_path = conn.execute(
+            "SELECT file_path FROM documents WHERE id = ?", (doc_b,)
+        ).fetchone()[0]
+        conn.close()
+
+        a_filename = Path(a_path).name
+        # doc_b already lives under Receipt/<year>/; rename it (file and row) onto the
+        # exact name doc_a's forward move would target, forcing that move to uniquify --
+        # this is the collision the reviewer reproduced.
+        collide_relative = f"{Path(b_path).parent.as_posix()}/{a_filename}"
+        (main.UPLOAD_DIR / b_path).rename(main.UPLOAD_DIR / collide_relative)
+        conn = sqlite3.connect(test_db)
+        conn.execute(
+            "UPDATE documents SET file_path = ? WHERE id = ?", (collide_relative, doc_b)
+        )
+        conn.commit()
+        conn.close()
+
+        monkeypatch.setattr(
+            main,
+            "get_db_connection",
+            _failing_update_get_db_connection(main.get_db_connection),
+        )
+
+        response = client.put(f"/document/{doc_a}", json={"category": "Receipt"})
+        assert response.status_code == 500
+
+        conn = sqlite3.connect(test_db)
+        category_after, path_after = conn.execute(
+            "SELECT category, file_path FROM documents WHERE id = ?", (doc_a,)
+        ).fetchone()
+        conn.close()
+
+        assert category_after == "Invoice"
+        assert path_after == a_path
+        assert (main.UPLOAD_DIR / a_path).exists()
+        assert (main.UPLOAD_DIR / a_path).read_bytes()[:4] == b"%PDF"
+        # The uniquified name the forward move used is gone -- the rollback moved
+        # that file back rather than leaving an orphan behind.
+        a_stem, a_suffix = Path(a_filename).stem, Path(a_filename).suffix
+        uniquified_relative = f"{Path(b_path).parent.as_posix()}/{a_stem}_1{a_suffix}"
+        assert not (main.UPLOAD_DIR / uniquified_relative).exists()
 
 
 class TestDeleteEndpoint:

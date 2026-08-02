@@ -1088,6 +1088,80 @@ class TestBackupRestoreEndpoints:
         assert response.status_code == 400
 
 
+class TestBackupIncludesNestedFiles:
+    def test_backup_preserves_the_category_tree(
+        self, client, test_db, sample_pdf_bytes, monkeypatch
+    ):
+        import zipfile
+        import io
+
+        import backend.main as main
+
+        monkeypatch.setattr(
+            main, "process_document", lambda text, filename: (["test"], "Invoice")
+        )
+        monkeypatch.setattr(main, "generate_thumbnail", lambda path, name: None)
+
+        client.post(
+            "/upload", files={"file": ("nested.pdf", sample_pdf_bytes, "application/pdf")}
+        )
+
+        response = client.get("/backup")
+        assert response.status_code == 200
+
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            pdf_entries = [n for n in archive.namelist() if n.endswith(".pdf")]
+
+        assert pdf_entries, "backup contained no PDFs"
+        assert all(entry.startswith("uploads/") for entry in pdf_entries)
+        assert any(entry.startswith("uploads/Invoice/") for entry in pdf_entries)
+
+    def test_backup_excludes_staging(self, client, test_db, sample_pdf_bytes):
+        import zipfile
+        import io
+
+        import backend.main as main
+        from backend import storage
+
+        staging = storage.staging_dir(main.UPLOAD_DIR)
+        staging.mkdir(parents=True, exist_ok=True)
+        (staging / "half_written.pdf").write_bytes(sample_pdf_bytes)
+
+        response = client.get("/backup")
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            names = archive.namelist()
+
+        assert not any(storage.STAGING_DIRNAME in name for name in names)
+
+
+class TestStartupMigration:
+    def test_flat_legacy_document_is_organised(self, test_db, temp_test_dir):
+        import sqlite3
+
+        import backend.main as main
+        from backend import storage
+
+        flat = main.UPLOAD_DIR / "20240101_000000_legacy.pdf"
+        flat.write_bytes(b"%PDF-1.4 legacy")
+
+        conn = sqlite3.connect(test_db)
+        conn.execute(
+            "INSERT INTO documents (original_filename, stored_filename, file_path, "
+            "category, upload_date) VALUES (?, ?, ?, ?, ?)",
+            ("legacy.pdf", flat.name, str(flat), "Legal", "2024-01-01T00:00:00"),
+        )
+        conn.commit()
+        conn.close()
+
+        stats = storage.migrate_uploads_to_category_folders(
+            main.get_db_connection, main.UPLOAD_DIR
+        )
+
+        assert stats["moved"] == 1
+        assert (main.UPLOAD_DIR / "Legal" / "2024" / flat.name).exists()
+        assert not flat.exists()
+
+
 class TestDuplicateDetectionRace:
     """
     T010: The pre-check SELECT and the INSERT are in separate transactions.

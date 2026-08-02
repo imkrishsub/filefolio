@@ -159,7 +159,14 @@ def init_db():
     conn.close()
 
 
+try:
+    from backend import storage
+except ModuleNotFoundError:
+    import storage
+
+
 init_db()
+storage.migrate_uploads_to_category_folders(get_db_connection, UPLOAD_DIR)
 
 
 # Initialize sync service
@@ -167,11 +174,6 @@ try:
     from backend.sync_service import SyncFolderService
 except ModuleNotFoundError:
     from sync_service import SyncFolderService
-
-try:
-    from backend import storage
-except ModuleNotFoundError:
-    import storage
 
 sync_service = SyncFolderService(DB_PATH, UPLOAD_DIR, THUMBNAILS_DIR)
 
@@ -1529,8 +1531,12 @@ async def create_backup(background_tasks: BackgroundTasks):
 
             # Add all PDFs
             if UPLOAD_DIR.exists():
-                for pdf_file in UPLOAD_DIR.glob("*.pdf"):
-                    zip_file.write(pdf_file, f"uploads/{pdf_file.name}")
+                for pdf_file in UPLOAD_DIR.rglob("*.pdf"):
+                    relative = pdf_file.relative_to(UPLOAD_DIR)
+                    # Skip uploads that are still being written.
+                    if storage.STAGING_DIRNAME in relative.parts:
+                        continue
+                    zip_file.write(pdf_file, f"uploads/{relative.as_posix()}")
 
             # Add all thumbnails
             if THUMBNAILS_DIR.exists():
@@ -1665,6 +1671,20 @@ async def restore_backup(file: UploadFile = File(...)):
 
         # Restart sync service
         sync_service.start()
+
+        # A backup taken elsewhere carries absolute paths that mean nothing here;
+        # re-organise so every restored row points at a real file. This is
+        # best-effort: a restore that otherwise succeeded should not be reported
+        # as failed just because the migration pass could not run (e.g. the
+        # restored database is unreadable for some other reason).
+        try:
+            storage.migrate_uploads_to_category_folders(get_db_connection, UPLOAD_DIR)
+        except Exception as exc:
+            import logging as _logging
+
+            _logging.getLogger(__name__).warning(
+                "Post-restore upload migration did not complete: %s", exc
+            )
 
         return {
             "success": True,

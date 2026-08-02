@@ -1178,6 +1178,20 @@ async def update_document(doc_id: int, updates: UpdateRequest):
         update_fields.append("category = ?")
         params.append(updates.category)
 
+        # Keep the file where its category says it should be. The year comes from
+        # the original upload date so an edit does not move it into the current year.
+        try:
+            new_file_path = storage.move_to_category(
+                row["file_path"], UPLOAD_DIR, updates.category, row["upload_date"]
+            )
+        except (OSError, ValueError) as exc:
+            conn.close()
+            raise HTTPException(
+                status_code=500, detail=f"Could not move the document file: {exc}"
+            )
+        update_fields.append("file_path = ?")
+        params.append(new_file_path)
+
     if not update_fields:
         conn.close()
         raise HTTPException(status_code=400, detail="No valid fields to update")

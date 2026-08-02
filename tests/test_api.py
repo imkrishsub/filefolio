@@ -434,6 +434,77 @@ class TestUpdateEndpoint:
         assert response.status_code == 422
 
 
+class TestRecategoriseMovesFile:
+    def _upload(self, client, sample_pdf_bytes, monkeypatch, category, name):
+        import backend.main as main
+
+        monkeypatch.setattr(
+            main, "process_document", lambda text, filename: (["test"], category)
+        )
+        monkeypatch.setattr(main, "generate_thumbnail", lambda path, name_: None)
+        return client.post(
+            "/upload", files={"file": (name, sample_pdf_bytes, "application/pdf")}
+        ).json()["id"]
+
+    def test_changing_category_moves_the_pdf(
+        self, client, test_db, sample_pdf_bytes, monkeypatch
+    ):
+        import backend.main as main
+
+        doc_id = self._upload(client, sample_pdf_bytes, monkeypatch, "Invoice", "move.pdf")
+
+        conn = sqlite3.connect(test_db)
+        old_path = conn.execute(
+            "SELECT file_path FROM documents WHERE id = ?", (doc_id,)
+        ).fetchone()[0]
+        conn.close()
+        assert old_path.startswith("Invoice/")
+
+        response = client.put(f"/document/{doc_id}", json={"category": "Receipt"})
+        assert response.status_code == 200
+
+        conn = sqlite3.connect(test_db)
+        new_path = conn.execute(
+            "SELECT file_path FROM documents WHERE id = ?", (doc_id,)
+        ).fetchone()[0]
+        conn.close()
+
+        assert new_path.startswith("Receipt/")
+        assert (main.UPLOAD_DIR / new_path).exists()
+        assert not (main.UPLOAD_DIR / old_path).exists()
+
+    def test_document_is_still_downloadable_after_recategorising(
+        self, client, test_db, sample_pdf_bytes, monkeypatch
+    ):
+        doc_id = self._upload(client, sample_pdf_bytes, monkeypatch, "Invoice", "still.pdf")
+        client.put(f"/document/{doc_id}", json={"category": "Tax"})
+
+        download = client.get(f"/download/{doc_id}")
+        assert download.status_code == 200
+        assert download.content[:4] == b"%PDF"
+
+    def test_updating_only_tags_does_not_move_the_file(
+        self, client, test_db, sample_pdf_bytes, monkeypatch
+    ):
+        doc_id = self._upload(client, sample_pdf_bytes, monkeypatch, "Invoice", "tagsonly.pdf")
+
+        conn = sqlite3.connect(test_db)
+        before = conn.execute(
+            "SELECT file_path FROM documents WHERE id = ?", (doc_id,)
+        ).fetchone()[0]
+        conn.close()
+
+        client.put(f"/document/{doc_id}", json={"tags": ["a", "b"]})
+
+        conn = sqlite3.connect(test_db)
+        after = conn.execute(
+            "SELECT file_path FROM documents WHERE id = ?", (doc_id,)
+        ).fetchone()[0]
+        conn.close()
+
+        assert before == after
+
+
 class TestDeleteEndpoint:
     """Tests for the DELETE /document/{id} endpoint."""
 

@@ -565,8 +565,8 @@ async def upload_pdf(file: UploadFile = File(...)):
 
         # Move out of staging into uploads/<Category>/<Year>/. The filename may be
         # uniquified here, so the thumbnail is generated afterwards from the final
-        # name. shutil.Error is not an OSError subclass, and _move_into_place falls
-        # back to shutil.move, so both have to be caught here.
+        # name. _move_into_place falls back to shutil.move, which raises shutil.Error;
+        # that subclasses OSError, so it is named here only to make the intent explicit.
         upload_date = datetime.now().isoformat()
         try:
             file_path, stored_filename = storage.place(

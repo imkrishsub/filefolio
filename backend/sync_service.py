@@ -463,9 +463,10 @@ class SyncFolderService:
                 # AI processing for tags and category
                 tags, category = process_document(text_preview, file_path.name)
 
-                # Move out of staging into uploads/<Category>/<Year>/. shutil.Error is
-                # not an OSError subclass and _move_into_place falls back to
-                # shutil.move, so both have to be caught here.
+                # Move out of staging into uploads/<Category>/<Year>/.
+                # _move_into_place falls back to shutil.move, which raises
+                # shutil.Error; that subclasses OSError, so it is named here only
+                # to make the intent explicit.
                 upload_date = datetime.now().isoformat()
                 try:
                     dest_path, stored_filename = storage.place(

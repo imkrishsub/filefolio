@@ -1289,9 +1289,11 @@ class TestStagedUploadsAreNotLeaked:
     def test_upload_cleans_up_when_the_move_raises_shutil_error(
         self, client, test_db, sample_pdf_bytes, monkeypatch
     ):
-        """shutil.Error is not an OSError subclass, and _move_into_place falls back to
-        shutil.move -- so an OSError-only guard at the call site lets it escape as an
-        unhandled 500 with the staged file still on disk."""
+        """_move_into_place falls back to shutil.move, which raises shutil.Error.
+
+        That subclasses OSError, so the call-site guard already covers it. What this
+        test actually pins is the staging cleanup: however the move fails, the staged
+        file must not be left behind."""
         import backend.main as main
         from backend import storage
 

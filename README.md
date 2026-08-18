@@ -152,12 +152,44 @@ pytest
 
 Full API and functionality coverage including unit tests, integration tests, and frontend tests.
 
+## MCP server (optional)
+
+Lets other Claude Code sessions search, read, and add documents in a running
+FileFolio instance over the [Model Context Protocol](https://modelcontextprotocol.io) —
+without needing to be in this repo's directory.
+
+The MCP server needs its own virtual environment: the `mcp` SDK requires newer
+`anyio`/`starlette` versions than FileFolio's pinned FastAPI supports, so it can't
+share `venv/` with the backend.
+
+1. **Create the MCP virtual environment and install its dependencies**
+```bash
+python3 -m venv venv-mcp
+venv-mcp/bin/pip install -r requirements-mcp.txt
+```
+
+2. **Register it with Claude Code**, with FileFolio already running (`python backend/main.py`).
+   Run this from the FileFolio repo root so the paths resolve to absolute paths —
+   `claude mcp add` needs them, since the server may be invoked from any directory:
+```bash
+claude mcp add filefolio -s user -- "$(pwd)/venv-mcp/bin/python" "$(pwd)/backend/mcp_server.py"
+```
+
+3. **Optional: point it at a non-default FileFolio instance**
+```bash
+claude mcp add filefolio -s user -e FILEFOLIO_URL=http://127.0.0.1:8080 -- "$(pwd)/venv-mcp/bin/python" "$(pwd)/backend/mcp_server.py"
+```
+
+Available tools: `filefolio_search`, `filefolio_get_document`, `filefolio_download`,
+`filefolio_upload`.
+
 ## Project structure
 
 ```
 filefolio/
 ├── backend/
 │   ├── main.py          # FastAPI server
+│   ├── mcp_server.py    # MCP server (own venv, see below)
 │   └── sync_service.py  # Folder sync service
 ├── frontend/
 │   ├── static/
@@ -170,9 +202,10 @@ filefolio/
 ├── uploads/             # PDF storage (created on first run)
 ├── thumbnails/          # Document thumbnails (created on first run)
 ├── data/                # Database (created on first run)
-├── setup.cfg            # Linting and tool configuration
-├── pytest.ini           # Test configuration
-└── requirements.txt
+├── setup.cfg             # Linting and tool configuration
+├── pytest.ini            # Test configuration
+├── requirements.txt
+└── requirements-mcp.txt  # MCP server dependencies (separate venv-mcp/)
 ```
 
 ## How it works

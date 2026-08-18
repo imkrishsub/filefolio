@@ -1066,6 +1066,39 @@ async def list_documents(
     return documents
 
 
+@app.get("/documents/{doc_id}")
+async def get_document_metadata(doc_id: int):
+    """Retrieve JSON metadata for a single document."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM documents WHERE id = ?", (doc_id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    tags_field = row["tags"] if "tags" in row.keys() else None
+    tags = []
+    if tags_field and tags_field.strip():
+        try:
+            tags = json.loads(tags_field)
+        except (json.JSONDecodeError, ValueError):
+            tags = []
+
+    return {
+        "id": row["id"],
+        "original_filename": row["original_filename"],
+        "stored_filename": row["stored_filename"],
+        "auto_filename": row["auto_filename"],
+        "tags": tags,
+        "category": row["category"],
+        "upload_date": row["upload_date"],
+        "content_preview": row["content_preview"] or "",
+        "thumbnail": row["thumbnail_path"],
+    }
+
+
 @app.get("/filters")
 async def get_filters():
     """Get available categories and tags for filtering."""

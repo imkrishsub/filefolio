@@ -351,6 +351,35 @@ class TestDocumentsEndpoint:
         assert len(docs) >= 1
 
 
+class TestDocumentMetadataEndpoint:
+    """Tests for the GET /documents/{doc_id} JSON metadata endpoint."""
+
+    def test_get_document_metadata_returns_full_preview(
+        self, client, sample_pdf_bytes, mock_ollama_response
+    ):
+        files = {
+            "file": ("invoice.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")
+        }
+        upload_response = client.post("/upload", files=files)
+        doc_id = upload_response.json()["id"]
+
+        response = client.get(f"/documents/{doc_id}")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == doc_id
+        assert data["original_filename"] == "invoice.pdf"
+        assert data["category"] == "Invoice"
+        assert data["tags"] == ["test", "sample"]
+        assert "content_preview" in data
+        assert "thumbnail" in data
+
+    def test_get_document_metadata_not_found(self, client):
+        response = client.get("/documents/999999")
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Document not found"
+
+
 class TestDocumentEndpoint:
     """Tests for individual document operations."""
 

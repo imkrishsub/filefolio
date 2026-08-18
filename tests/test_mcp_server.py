@@ -86,3 +86,41 @@ class TestFilefolioSearch:
 
         with pytest.raises(RuntimeError, match="FileFolio not running"):
             await mcp_server.filefolio_search()
+
+
+class TestFilefolioGetDocument:
+    @pytest.mark.asyncio
+    async def test_get_document_returns_metadata(self, monkeypatch):
+        async def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/documents/7"
+            return httpx.Response(
+                200,
+                json={
+                    "id": 7,
+                    "original_filename": "invoice.pdf",
+                    "stored_filename": "20260818_invoice.pdf",
+                    "auto_filename": "2026-08-18_invoice.pdf",
+                    "tags": ["finance"],
+                    "category": "Invoice",
+                    "upload_date": "2026-08-18T10:00:00",
+                    "content_preview": "Invoice #123 ...",
+                    "thumbnail": "thumbnails/7.jpg",
+                },
+            )
+
+        monkeypatch.setattr(mcp_server, "_make_client", _client_with_handler(handler))
+
+        result = await mcp_server.filefolio_get_document(7)
+
+        assert result["id"] == 7
+        assert result["content_preview"] == "Invoice #123 ..."
+
+    @pytest.mark.asyncio
+    async def test_get_document_not_found_raises(self, monkeypatch):
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(404, json={"detail": "Document not found"})
+
+        monkeypatch.setattr(mcp_server, "_make_client", _client_with_handler(handler))
+
+        with pytest.raises(RuntimeError, match="Document 999 not found"):
+            await mcp_server.filefolio_get_document(999)

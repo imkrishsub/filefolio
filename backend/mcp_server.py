@@ -79,5 +79,22 @@ async def filefolio_search(
     ]
 
 
+@server.tool()
+async def filefolio_get_document(doc_id: int) -> dict:
+    """Get full metadata and text preview for a single FileFolio document."""
+    async with _make_client() as client:
+        try:
+            resp = await client.get(f"/documents/{doc_id}")
+        except httpx.ConnectError:
+            raise _connection_error()
+
+    if resp.status_code == 404:
+        raise RuntimeError(f"Document {doc_id} not found")
+    if resp.status_code != 200:
+        raise _api_error(resp)
+
+    return resp.json()
+
+
 if __name__ == "__main__":
     server.run()

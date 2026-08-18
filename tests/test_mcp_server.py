@@ -169,6 +169,12 @@ class TestFilefolioUpload:
 
         async def handler(request: httpx.Request) -> httpx.Response:
             assert request.url.path == "/upload"
+            # Verify multipart request body is correctly formed
+            assert request.headers["content-type"].startswith("multipart/form-data")
+            body_str = request.content.decode(errors="replace")
+            assert 'name="file"' in body_str
+            assert 'filename="receipt.pdf"' in body_str
+            assert "Content-Type: application/pdf" in body_str
             return httpx.Response(
                 200,
                 json={

@@ -119,5 +119,30 @@ async def filefolio_download(doc_id: int, dest_path: str) -> str:
     return str(dest)
 
 
+@server.tool()
+async def filefolio_upload(file_path: str) -> dict:
+    """Upload a local PDF file into FileFolio for AI tagging and categorization."""
+    src = Path(file_path)
+    if not src.is_file():
+        raise RuntimeError(f"File not found: {file_path}")
+    if src.suffix.lower() != ".pdf":
+        raise RuntimeError(f"Not a PDF file: {file_path}")
+
+    async with _make_client() as client:
+        try:
+            with src.open("rb") as f:
+                resp = await client.post(
+                    "/upload",
+                    files={"file": (src.name, f, "application/pdf")},
+                )
+        except httpx.ConnectError:
+            raise _connection_error()
+
+    if resp.status_code != 200:
+        raise _api_error(resp)
+
+    return resp.json()
+
+
 if __name__ == "__main__":
     server.run()

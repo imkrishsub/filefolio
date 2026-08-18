@@ -159,3 +159,45 @@ class TestFilefolioDownload:
 
         with pytest.raises(RuntimeError, match="does not exist"):
             await mcp_server.filefolio_download(1, str(missing_dir_dest))
+
+
+class TestFilefolioUpload:
+    @pytest.mark.asyncio
+    async def test_upload_sends_file_and_returns_metadata(self, monkeypatch, tmp_path):
+        pdf_path = tmp_path / "receipt.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 fake content")
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/upload"
+            return httpx.Response(
+                200,
+                json={
+                    "id": 5,
+                    "original_filename": "receipt.pdf",
+                    "auto_filename": "2026-08-18_receipt.pdf",
+                    "category": "Receipt",
+                    "tags": ["shopping"],
+                },
+            )
+
+        monkeypatch.setattr(mcp_server, "_make_client", _client_with_handler(handler))
+
+        result = await mcp_server.filefolio_upload(str(pdf_path))
+
+        assert result["id"] == 5
+        assert result["category"] == "Receipt"
+
+    @pytest.mark.asyncio
+    async def test_upload_missing_file_raises(self, tmp_path):
+        missing = tmp_path / "nope.pdf"
+
+        with pytest.raises(RuntimeError, match="File not found"):
+            await mcp_server.filefolio_upload(str(missing))
+
+    @pytest.mark.asyncio
+    async def test_upload_non_pdf_extension_raises(self, tmp_path):
+        txt_path = tmp_path / "notes.txt"
+        txt_path.write_text("hello")
+
+        with pytest.raises(RuntimeError, match="Not a PDF file"):
+            await mcp_server.filefolio_upload(str(txt_path))

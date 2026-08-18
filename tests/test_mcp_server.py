@@ -2,8 +2,10 @@
 Tests for the FileFolio MCP server tools in backend/mcp_server.py.
 
 Run inside venv-mcp/ (this file imports backend.mcp_server, which imports the
-`mcp` SDK -- incompatible with the backend's own venv/, see requirements-mcp.txt
-and the Global Constraints in the implementation plan).
+`mcp` SDK -- incompatible with the backend's own venv/, see requirements-mcp.txt).
+Run with: venv-mcp/bin/python -m pytest --noconftest tests/test_mcp_server.py
+(--noconftest is required because tests/conftest.py imports fastapi at module
+scope, which is not installed in venv-mcp/).
 """
 
 import httpx
@@ -20,10 +22,11 @@ import backend.mcp_server as mcp_server
 def _client_with_handler(handler):
     """Build a _make_client() replacement backed by an httpx.MockTransport."""
 
-    def _make_client():
+    def _make_client(timeout: float = 30.0):
         return httpx.AsyncClient(
             transport=httpx.MockTransport(handler),
             base_url="http://testserver",
+            timeout=timeout,
         )
 
     return _make_client
@@ -85,6 +88,19 @@ class TestFilefolioSearch:
         monkeypatch.setattr(mcp_server, "_make_client", _client_with_handler(handler))
 
         with pytest.raises(RuntimeError, match="FileFolio not running"):
+            await mcp_server.filefolio_search()
+
+    @pytest.mark.asyncio
+    async def test_search_timeout_raises_clear_message(self, monkeypatch):
+        async def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ReadTimeout("timed out", request=request)
+
+        monkeypatch.setattr(mcp_server, "_make_client", _client_with_handler(handler))
+
+        # httpx.TimeoutException must be caught explicitly -- it does NOT
+        # inherit from httpx.ConnectError, so this proves the timeout guard
+        # is in place and a raw httpx exception does not leak through.
+        with pytest.raises(RuntimeError, match="did not respond in time"):
             await mcp_server.filefolio_search()
 
 
@@ -192,6 +208,40 @@ class TestFilefolioUpload:
 
         assert result["id"] == 5
         assert result["category"] == "Receipt"
+
+    @pytest.mark.asyncio
+    async def test_upload_uses_longer_timeout_than_default(self, monkeypatch, tmp_path):
+        """filefolio_upload must request a read timeout longer than the 30s
+        default used by the other three tools, since OCR + local LLM tagging
+        on the backend routinely takes well over 30s for a scanned PDF."""
+        pdf_path = tmp_path / "receipt.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4 fake content")
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "id": 5,
+                    "original_filename": "receipt.pdf",
+                    "auto_filename": "2026-08-18_receipt.pdf",
+                    "category": "Receipt",
+                    "tags": ["shopping"],
+                },
+            )
+
+        base_make_client = _client_with_handler(handler)
+        captured_timeouts = []
+
+        def _recording_make_client(timeout: float = 30.0):
+            captured_timeouts.append(timeout)
+            return base_make_client(timeout=timeout)
+
+        monkeypatch.setattr(mcp_server, "_make_client", _recording_make_client)
+
+        await mcp_server.filefolio_upload(str(pdf_path))
+
+        assert captured_timeouts == [300.0]
+        assert captured_timeouts[0] > 30.0
 
     @pytest.mark.asyncio
     async def test_upload_missing_file_raises(self, tmp_path):

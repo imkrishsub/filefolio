@@ -165,19 +165,33 @@ share `venv/` with the backend.
 1. **Create the MCP virtual environment and install its dependencies**
 ```bash
 python3 -m venv venv-mcp
-venv-mcp/bin/pip install -r requirements-mcp.txt
+venv-mcp/bin/pip install -r requirements-mcp.txt  # On Windows: venv-mcp\Scripts\pip install -r requirements-mcp.txt
 ```
 
 2. **Register it with Claude Code**, with FileFolio already running (`python backend/main.py`).
    Run this from the FileFolio repo root so the paths resolve to absolute paths —
    `claude mcp add` needs them, since the server may be invoked from any directory:
+
+   macOS/Linux (bash/zsh):
 ```bash
 claude mcp add filefolio -s user -- "$(pwd)/venv-mcp/bin/python" "$(pwd)/backend/mcp_server.py"
 ```
 
+   Windows (PowerShell):
+```powershell
+claude mcp add filefolio -s user -- "$PWD\venv-mcp\Scripts\python.exe" "$PWD\backend\mcp_server.py"
+```
+
 3. **Optional: point it at a non-default FileFolio instance**
+
+   macOS/Linux (bash/zsh):
 ```bash
 claude mcp add filefolio -s user -e FILEFOLIO_URL=http://127.0.0.1:8080 -- "$(pwd)/venv-mcp/bin/python" "$(pwd)/backend/mcp_server.py"
+```
+
+   Windows (PowerShell):
+```powershell
+claude mcp add filefolio -s user -e FILEFOLIO_URL=http://127.0.0.1:8080 -- "$PWD\venv-mcp\Scripts\python.exe" "$PWD\backend\mcp_server.py"
 ```
 
 Available tools: `filefolio_search`, `filefolio_get_document`, `filefolio_download`,

@@ -21,12 +21,19 @@ FILEFOLIO_URL = os.environ.get("FILEFOLIO_URL", "http://127.0.0.1:8000")
 server = MCPServer("filefolio")
 
 
-def _make_client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(base_url=FILEFOLIO_URL, timeout=30.0)
+def _make_client(timeout: float = 30.0) -> httpx.AsyncClient:
+    return httpx.AsyncClient(base_url=FILEFOLIO_URL, timeout=timeout)
 
 
 def _connection_error() -> RuntimeError:
     return RuntimeError(f"FileFolio not running at {FILEFOLIO_URL}")
+
+
+def _timeout_error() -> RuntimeError:
+    return RuntimeError(
+        f"FileFolio at {FILEFOLIO_URL} did not respond in time -- a large or "
+        "scanned PDF may still be processing"
+    )
 
 
 def _api_error(resp: httpx.Response) -> RuntimeError:
@@ -63,6 +70,8 @@ async def filefolio_search(
             resp = await client.get("/documents", params=params)
         except httpx.ConnectError:
             raise _connection_error()
+        except httpx.TimeoutException:
+            raise _timeout_error()
 
     if resp.status_code != 200:
         raise _api_error(resp)
@@ -88,6 +97,8 @@ async def filefolio_get_document(doc_id: int) -> dict:
             resp = await client.get(f"/documents/{doc_id}")
         except httpx.ConnectError:
             raise _connection_error()
+        except httpx.TimeoutException:
+            raise _timeout_error()
 
     if resp.status_code == 404:
         raise RuntimeError(f"Document {doc_id} not found")
@@ -109,6 +120,8 @@ async def filefolio_download(doc_id: int, dest_path: str) -> str:
             resp = await client.get(f"/download/{doc_id}")
         except httpx.ConnectError:
             raise _connection_error()
+        except httpx.TimeoutException:
+            raise _timeout_error()
 
     if resp.status_code == 404:
         raise RuntimeError(f"Document {doc_id} not found")
@@ -128,7 +141,10 @@ async def filefolio_upload(file_path: str) -> dict:
     if src.suffix.lower() != ".pdf":
         raise RuntimeError(f"Not a PDF file: {file_path}")
 
-    async with _make_client() as client:
+    # OCR + local LLM tagging on the backend routinely takes well over the
+    # default 30s timeout for a multi-page or scanned PDF, so give this
+    # specific tool a much longer read timeout than the other three.
+    async with _make_client(timeout=300.0) as client:
         try:
             with src.open("rb") as f:
                 resp = await client.post(
@@ -137,6 +153,8 @@ async def filefolio_upload(file_path: str) -> dict:
                 )
         except httpx.ConnectError:
             raise _connection_error()
+        except httpx.TimeoutException:
+            raise _timeout_error()
 
     if resp.status_code != 200:
         raise _api_error(resp)

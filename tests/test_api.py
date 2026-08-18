@@ -355,13 +355,21 @@ class TestDocumentMetadataEndpoint:
     """Tests for the GET /documents/{doc_id} JSON metadata endpoint."""
 
     def test_get_document_metadata_returns_full_preview(
-        self, client, sample_pdf_bytes, mock_ollama_response
+        self, client, sample_pdf_bytes, mock_ollama_response, db_connection
     ):
         files = {
             "file": ("invoice.pdf", io.BytesIO(sample_pdf_bytes), "application/pdf")
         }
         upload_response = client.post("/upload", files=files)
         doc_id = upload_response.json()["id"]
+
+        # Create a content_preview longer than 200 chars to verify it's returned in full
+        full_preview = "a" * 250  # 250 chars, definitely > 200
+        db_connection.execute(
+            "UPDATE documents SET content_preview = ? WHERE id = ?",
+            (full_preview, doc_id),
+        )
+        db_connection.commit()
 
         response = client.get(f"/documents/{doc_id}")
 
@@ -371,7 +379,9 @@ class TestDocumentMetadataEndpoint:
         assert data["original_filename"] == "invoice.pdf"
         assert data["category"] == "Invoice"
         assert data["tags"] == ["test", "sample"]
-        assert "content_preview" in data
+        # Verify the full preview is returned, not truncated to 200 chars
+        assert data["content_preview"] == full_preview
+        assert len(data["content_preview"]) == 250
         assert "thumbnail" in data
 
     def test_get_document_metadata_not_found(self, client):

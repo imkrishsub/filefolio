@@ -124,3 +124,38 @@ class TestFilefolioGetDocument:
 
         with pytest.raises(RuntimeError, match="Document 999 not found"):
             await mcp_server.filefolio_get_document(999)
+
+
+class TestFilefolioDownload:
+    @pytest.mark.asyncio
+    async def test_download_writes_pdf_to_dest_path(self, monkeypatch, tmp_path):
+        pdf_bytes = b"%PDF-1.4 fake content"
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/download/3"
+            return httpx.Response(200, content=pdf_bytes)
+
+        monkeypatch.setattr(mcp_server, "_make_client", _client_with_handler(handler))
+
+        dest = tmp_path / "out.pdf"
+        result = await mcp_server.filefolio_download(3, str(dest))
+
+        assert result == str(dest)
+        assert dest.read_bytes() == pdf_bytes
+
+    @pytest.mark.asyncio
+    async def test_download_not_found_raises(self, monkeypatch, tmp_path):
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(404, json={"detail": "Document not found"})
+
+        monkeypatch.setattr(mcp_server, "_make_client", _client_with_handler(handler))
+
+        with pytest.raises(RuntimeError, match="Document 999 not found"):
+            await mcp_server.filefolio_download(999, str(tmp_path / "out.pdf"))
+
+    @pytest.mark.asyncio
+    async def test_download_missing_parent_dir_raises(self, tmp_path):
+        missing_dir_dest = tmp_path / "nope" / "out.pdf"
+
+        with pytest.raises(RuntimeError, match="does not exist"):
+            await mcp_server.filefolio_download(1, str(missing_dir_dest))

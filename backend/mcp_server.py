@@ -10,6 +10,7 @@ pinned fastapi.
 """
 
 import os
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -94,6 +95,28 @@ async def filefolio_get_document(doc_id: int) -> dict:
         raise _api_error(resp)
 
     return resp.json()
+
+
+@server.tool()
+async def filefolio_download(doc_id: int, dest_path: str) -> str:
+    """Download a FileFolio document's PDF to a local file path."""
+    dest = Path(dest_path)
+    if not dest.parent.is_dir():
+        raise RuntimeError(f"Destination directory does not exist: {dest.parent}")
+
+    async with _make_client() as client:
+        try:
+            resp = await client.get(f"/download/{doc_id}")
+        except httpx.ConnectError:
+            raise _connection_error()
+
+    if resp.status_code == 404:
+        raise RuntimeError(f"Document {doc_id} not found")
+    if resp.status_code != 200:
+        raise _api_error(resp)
+
+    dest.write_bytes(resp.content)
+    return str(dest)
 
 
 if __name__ == "__main__":

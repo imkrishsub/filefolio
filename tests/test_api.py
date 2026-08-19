@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pypdf
 import pytest
+from pypdf import PdfWriter
 
 
 class TestRootEndpoint:
@@ -169,6 +170,27 @@ class TestUploadEndpoint:
             )
         assert response.status_code == 400
         assert "password" in response.json()["detail"].lower()
+
+    def test_upload_owner_encrypted_pdf_extracts_text(
+        self, client, temp_test_dir, mock_ollama_response
+    ):
+        """AES-encrypted PDFs with no user password (e.g. payslips) should upload
+        successfully and have their text extracted, not fall back to an error
+        preview -- regression test for the missing `cryptography` dependency."""
+        writer = PdfWriter()
+        writer.add_blank_page(width=200, height=200)
+        writer.encrypt(user_password="", owner_password="owner-secret", algorithm="AES-256")
+
+        pdf_bytes = io.BytesIO()
+        writer.write(pdf_bytes)
+        pdf_bytes.seek(0)
+
+        response = client.post(
+            "/upload",
+            files={"file": ("payslip.pdf", pdf_bytes, "application/pdf")},
+        )
+        assert response.status_code == 200
+        assert "cryptography" not in response.json()["preview"].lower()
 
     @pytest.mark.parametrize("bad_name", ["\x00.pdf", "legit\x00.pdf"])
     def test_upload_invalid_filename_returns_400(self, client, bad_name):

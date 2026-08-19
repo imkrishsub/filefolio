@@ -51,6 +51,22 @@ class TestPDFTextExtraction:
         reader = pypdf.PdfReader(multipage_pdf)
         assert len(reader.pages) == 5
 
+    def test_extract_text_from_owner_encrypted_pdf(self, temp_test_dir):
+        """AES-encrypted PDFs with no user password (common for payslips/statements)
+        should decrypt and extract text without the `cryptography` package error."""
+        writer = PdfWriter()
+        writer.add_blank_page(width=200, height=200)
+        writer.encrypt(user_password="", owner_password="owner-secret", algorithm="AES-256")
+
+        encrypted_pdf = temp_test_dir / "owner_encrypted.pdf"
+        with open(encrypted_pdf, "wb") as f:
+            writer.write(f)
+
+        reader = pypdf.PdfReader(encrypted_pdf)
+        assert reader.is_encrypted
+        text = reader.pages[0].extract_text()
+        assert isinstance(text, str)
+
 
 class TestThumbnailGeneration:
     """Tests for thumbnail generation."""

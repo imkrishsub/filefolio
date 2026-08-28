@@ -21,6 +21,24 @@ FILEFOLIO_URL = os.environ.get("FILEFOLIO_URL", "http://127.0.0.1:8000")
 server = MCPServer("filefolio")
 
 
+# Mirrors ValidCategory in backend/main.py. Kept here so an invalid category is
+# rejected with a readable message instead of a bare HTTP 422 from FastAPI.
+VALID_CATEGORIES = (
+    "Invoice",
+    "Receipt",
+    "Contract",
+    "Letter",
+    "Report",
+    "Form",
+    "Statement",
+    "Legal",
+    "Medical",
+    "Tax",
+    "Insurance",
+    "Other",
+)
+
+
 def _make_client(timeout: float = 30.0) -> httpx.AsyncClient:
     return httpx.AsyncClient(base_url=FILEFOLIO_URL, timeout=timeout)
 
@@ -160,6 +178,62 @@ async def filefolio_upload(file_path: str) -> dict:
         raise _api_error(resp)
 
     return resp.json()
+
+
+@server.tool()
+async def filefolio_update(
+    doc_id: int,
+    filename: Optional[str] = None,
+    tags: Optional[list[str]] = None,
+    category: Optional[str] = None,
+) -> dict:
+    """Update a FileFolio document's filename, tags, or category.
+
+    Only the fields you pass are changed. Changing the category also moves the
+    stored PDF into that category's folder. Returns the updated document.
+    """
+    payload: dict = {}
+    if filename is not None:
+        payload["auto_filename"] = filename
+    if tags is not None:
+        payload["tags"] = tags
+    if category is not None:
+        if category not in VALID_CATEGORIES:
+            raise RuntimeError(
+                f"Invalid category '{category}'. Valid categories: "
+                + ", ".join(VALID_CATEGORIES)
+            )
+        payload["category"] = category
+
+    if not payload:
+        raise RuntimeError("Nothing to update: pass filename, tags, or category")
+
+    async with _make_client() as client:
+        try:
+            resp = await client.put(f"/document/{doc_id}", json=payload)
+        except httpx.ConnectError:
+            raise _connection_error()
+        except httpx.TimeoutException:
+            raise _timeout_error()
+
+        if resp.status_code == 404:
+            raise RuntimeError(f"Document {doc_id} not found")
+        if resp.status_code != 200:
+            raise _api_error(resp)
+
+        # The update endpoint only returns {"success": true}, so re-read the
+        # document to hand back the state the caller actually cares about.
+        try:
+            fetched = await client.get(f"/documents/{doc_id}")
+        except httpx.ConnectError:
+            raise _connection_error()
+        except httpx.TimeoutException:
+            raise _timeout_error()
+
+    if fetched.status_code != 200:
+        raise _api_error(fetched)
+
+    return fetched.json()
 
 
 if __name__ == "__main__":

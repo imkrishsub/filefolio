@@ -154,7 +154,7 @@ Full API and functionality coverage including unit tests, integration tests, and
 
 ## MCP server (optional)
 
-Lets other Claude Code sessions search, read, and add documents in a running
+Lets other Claude Code sessions search, read, add, and re-tag documents in a running
 FileFolio instance over the [Model Context Protocol](https://modelcontextprotocol.io) —
 without needing to be in this repo's directory.
 
@@ -195,7 +195,7 @@ claude mcp add filefolio -s user -e FILEFOLIO_URL=http://127.0.0.1:8080 -- "$PWD
 ```
 
 Available tools: `filefolio_search`, `filefolio_get_document`, `filefolio_download`,
-`filefolio_upload`.
+`filefolio_upload`, `filefolio_update`.
 
 ## Project structure
 

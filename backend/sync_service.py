@@ -460,8 +460,10 @@ class SyncFolderService:
                     text_preview = f"Error extracting text: {str(e)}"
                     logger.error(f"Text extraction failed: {e}")
 
-                # AI processing for tags and category
-                tags, category = process_document(text_preview, file_path.name)
+                # AI processing for tags, category and filename
+                tags, category, auto_filename = process_document(
+                    text_preview, file_path.name
+                )
 
                 # Move out of staging into uploads/<Category>/<Year>/.
                 # _move_into_place falls back to shutil.move, which raises
@@ -502,7 +504,7 @@ class SyncFolderService:
                     (
                         file_path.name,
                         stored_filename,
-                        None,
+                        auto_filename,
                         dest_path.relative_to(self.upload_dir).as_posix(),
                         file_hash,
                         json.dumps(tags),

@@ -392,7 +392,7 @@ class TestSyncStorageLayout:
         import backend.main as main
 
         monkeypatch.setattr(
-            main, "process_document", lambda text, filename: (["test"], "Contract")
+            main, "process_document", lambda text, filename: (["test"], "Contract", None)
         )
         monkeypatch.setattr(main, "generate_thumbnail", lambda path, name: None)
 
@@ -421,7 +421,7 @@ class TestSyncStorageLayout:
         import backend.storage as storage
 
         monkeypatch.setattr(
-            main, "process_document", lambda text, filename: (["test"], "Contract")
+            main, "process_document", lambda text, filename: (["test"], "Contract", None)
         )
         monkeypatch.setattr(main, "generate_thumbnail", lambda path, name: None)
 

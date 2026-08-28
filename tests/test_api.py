@@ -211,7 +211,7 @@ class TestUploadStorageLayout:
         import backend.main as main
 
         monkeypatch.setattr(
-            main, "process_document", lambda text, filename: (["test"], "Invoice")
+            main, "process_document", lambda text, filename: (["test"], "Invoice", None)
         )
         monkeypatch.setattr(main, "generate_thumbnail", lambda path, name: None)
 
@@ -238,7 +238,7 @@ class TestUploadStorageLayout:
         from backend import storage
 
         monkeypatch.setattr(
-            main, "process_document", lambda text, filename: (["test"], "Invoice")
+            main, "process_document", lambda text, filename: (["test"], "Invoice", None)
         )
         monkeypatch.setattr(main, "generate_thumbnail", lambda path, name: None)
 
@@ -256,7 +256,7 @@ class TestUploadStorageLayout:
         import backend.main as main
 
         monkeypatch.setattr(
-            main, "process_document", lambda text, filename: (["test"], "Receipt")
+            main, "process_document", lambda text, filename: (["test"], "Receipt", None)
         )
         monkeypatch.setattr(main, "generate_thumbnail", lambda path, name: None)
 
@@ -539,7 +539,7 @@ class TestRecategoriseMovesFile:
         import backend.main as main
 
         monkeypatch.setattr(
-            main, "process_document", lambda text, filename: (["test"], category)
+            main, "process_document", lambda text, filename: (["test"], category, None)
         )
         monkeypatch.setattr(main, "generate_thumbnail", lambda path, name_: None)
         return client.post(
@@ -1160,7 +1160,7 @@ class TestBackupIncludesNestedFiles:
         import backend.main as main
 
         monkeypatch.setattr(
-            main, "process_document", lambda text, filename: (["test"], "Invoice")
+            main, "process_document", lambda text, filename: (["test"], "Invoice", None)
         )
         monkeypatch.setattr(main, "generate_thumbnail", lambda path, name: None)
 
@@ -1295,7 +1295,7 @@ class TestCategoryContract:
                     }
                 },
             )
-            _, resolved = main.process_document("some text", "doc.pdf")
+            _, resolved, _ = main.process_document("some text", "doc.pdf")
             assert resolved == category
 
     def test_a_category_outside_the_contract_degrades_to_other(
@@ -1312,7 +1312,7 @@ class TestCategoryContract:
                 }
             },
         )
-        _, resolved = main.process_document("some text", "doc.pdf")
+        _, resolved, _ = main.process_document("some text", "doc.pdf")
         assert resolved == "Other"
 
 
@@ -1359,7 +1359,7 @@ class TestStagedUploadsAreNotLeaked:
         from backend import storage
 
         monkeypatch.setattr(
-            main, "process_document", lambda text, filename: (["test"], "Invoice")
+            main, "process_document", lambda text, filename: (["test"], "Invoice", None)
         )
 
         def boom(*args, **kwargs):
@@ -1399,7 +1399,7 @@ class TestStagedUploadsAreNotLeaked:
         from backend import storage
 
         monkeypatch.setattr(
-            main, "process_document", lambda text, filename: (["test"], "Invoice")
+            main, "process_document", lambda text, filename: (["test"], "Invoice", None)
         )
 
         def boom(*args, **kwargs):
@@ -1744,7 +1744,7 @@ class TestNestedFileLifecycle:
         import backend.main as main
 
         monkeypatch.setattr(
-            main, "process_document", lambda text, filename: (["test"], category)
+            main, "process_document", lambda text, filename: (["test"], category, None)
         )
         monkeypatch.setattr(main, "generate_thumbnail", lambda path, name_: None)
         return client.post(
@@ -1928,7 +1928,7 @@ class TestStagingIsCleanAfterRejectedUploads:
         import backend.main as main
 
         monkeypatch.setattr(
-            main, "process_document", lambda text, filename: (["test"], "Invoice")
+            main, "process_document", lambda text, filename: (["test"], "Invoice", None)
         )
         monkeypatch.setattr(main, "generate_thumbnail", lambda path, name: None)
 
@@ -1970,7 +1970,7 @@ class TestOllamaModelConfiguration:
         monkeypatch.setattr(main.ollama, "chat", fake_chat)
         monkeypatch.setattr(main, "get_existing_tags", lambda: [])
 
-        tags, category = main.process_document("some invoice text", "doc.pdf")
+        tags, category, _ = main.process_document("some invoice text", "doc.pdf")
 
         assert captured["model"] == "qwen2.5"
         assert category == "Invoice"
@@ -2099,3 +2099,183 @@ class TestOllamaStatusEndpoint:
 
         assert response.status_code == 200
         assert response.json()["category"] in main.storage.VALID_CATEGORIES
+
+
+class TestSanitizeAutoFilename:
+    """The model's suggested name is free-form text and must be tamed."""
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("northwind-electricity-invoice", "northwind-electricity-invoice.pdf"),
+            ("Northwind Electricity Invoice", "northwind-electricity-invoice.pdf"),
+            ("northwind_electricity_invoice", "northwind-electricity-invoice.pdf"),
+            ("northwind-invoice.pdf", "northwind-invoice.pdf"),
+            ("  spaced name  ", "spaced-name.pdf"),
+            ('"quoted-name"', "quoted-name.pdf"),
+            ("multiple---hyphens", "multiple-hyphens.pdf"),
+            ("Rechnung für Stromkosten", "rechnung-f-r-stromkosten.pdf"),
+        ],
+    )
+    def test_normalises_to_safe_stem(self, raw, expected):
+        import backend.main as main
+
+        assert main._sanitize_auto_filename(raw, "doc.pdf") == expected
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "../../etc/passwd",
+            "/absolute/path/name",
+            "subdir/name",
+            "windows\\path\\name",
+        ],
+    )
+    def test_strips_any_path_component(self, raw):
+        """A suggested name must never be able to describe a path."""
+        import backend.main as main
+
+        result = main._sanitize_auto_filename(raw, "doc.pdf")
+
+        assert result is not None
+        assert "/" not in result
+        assert "\\" not in result
+        assert ".." not in result
+
+    @pytest.mark.parametrize("raw", [None, "", "   ", 42, {"a": 1}, "---", "!!!"])
+    def test_returns_none_for_unusable_input(self, raw):
+        """Nothing usable means auto_filename stays NULL, not a junk name."""
+        import backend.main as main
+
+        assert main._sanitize_auto_filename(raw, "doc.pdf") is None
+
+    def test_truncates_long_names(self):
+        import backend.main as main
+
+        result = main._sanitize_auto_filename("word-" * 40, "doc.pdf")
+
+        assert result is not None
+        assert len(result) <= 64
+        assert result.endswith(".pdf")
+        assert not result.startswith("-")
+
+    def test_keeps_the_original_extension(self):
+        import backend.main as main
+
+        assert main._sanitize_auto_filename("some-name", "scan.PDF") == "some-name.pdf"
+
+    def test_defaults_to_pdf_when_original_has_no_extension(self):
+        import backend.main as main
+
+        assert main._sanitize_auto_filename("some-name", "scan") == "some-name.pdf"
+
+
+class TestProcessDocumentFilename:
+    """process_document returns the suggested name as its third element."""
+
+    def _chat_returning(self, payload):
+        def fake_chat(*args, **kwargs):
+            return {"message": {"content": payload}}
+
+        return fake_chat
+
+    def test_returns_sanitised_filename_from_model(self, monkeypatch):
+        import backend.main as main
+
+        monkeypatch.setattr(main, "get_existing_tags", lambda: [])
+        monkeypatch.setattr(
+            main.ollama,
+            "chat",
+            self._chat_returning(
+                '{"category": "Invoice", "tags": ["electricity", "utility"],'
+                ' "filename": "Northwind Electricity Invoice"}'
+            ),
+        )
+
+        tags, category, auto_filename = main.process_document("text", "scan_0012.pdf")
+
+        assert category == "Invoice"
+        assert tags == ["electricity", "utility"]
+        assert auto_filename == "northwind-electricity-invoice.pdf"
+
+    def test_missing_filename_key_yields_none(self, monkeypatch):
+        """An older or terser model response must not break ingest."""
+        import backend.main as main
+
+        monkeypatch.setattr(main, "get_existing_tags", lambda: [])
+        monkeypatch.setattr(
+            main.ollama,
+            "chat",
+            self._chat_returning(
+                '{"category": "Invoice", "tags": ["electricity", "utility"]}'
+            ),
+        )
+
+        tags, category, auto_filename = main.process_document("text", "scan.pdf")
+
+        assert category == "Invoice"
+        assert auto_filename is None
+
+    def test_rule_based_fallback_suggests_no_filename(self, monkeypatch):
+        """With Ollama down there is no model to name the file."""
+        import backend.main as main
+
+        def boom(*args, **kwargs):
+            raise ConnectionError("connection refused")
+
+        monkeypatch.setattr(main, "get_existing_tags", lambda: [])
+        monkeypatch.setattr(main.ollama, "chat", boom)
+
+        tags, category, auto_filename = main.process_document("an invoice", "scan.pdf")
+
+        assert auto_filename is None
+        assert category in main.storage.VALID_CATEGORIES
+
+
+class TestUploadPersistsAutoFilename:
+    """The suggested name has to survive all the way into the database."""
+
+    def test_upload_stores_and_returns_auto_filename(
+        self, client, test_db, sample_pdf_bytes, monkeypatch
+    ):
+        import backend.main as main
+
+        monkeypatch.setattr(
+            main,
+            "process_document",
+            lambda text, filename: (["rent"], "Invoice", "harbourside-rent.pdf"),
+        )
+        monkeypatch.setattr(main, "generate_thumbnail", lambda path, name: None)
+
+        response = client.post(
+            "/upload",
+            files={"file": ("scan_0012.pdf", sample_pdf_bytes, "application/pdf")},
+        )
+
+        assert response.status_code == 200
+        doc_id = response.json()["id"]
+        assert response.json()["auto_filename"] == "harbourside-rent.pdf"
+
+        listed = client.get(f"/documents/{doc_id}")
+        assert listed.status_code == 200
+        assert listed.json()["auto_filename"] == "harbourside-rent.pdf"
+
+    def test_upload_stores_null_when_no_name_suggested(
+        self, client, test_db, sample_pdf_bytes, monkeypatch
+    ):
+        import backend.main as main
+
+        monkeypatch.setattr(
+            main,
+            "process_document",
+            lambda text, filename: (["rent"], "Invoice", None),
+        )
+        monkeypatch.setattr(main, "generate_thumbnail", lambda path, name: None)
+
+        response = client.post(
+            "/upload",
+            files={"file": ("scan_0013.pdf", sample_pdf_bytes, "application/pdf")},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["auto_filename"] is None

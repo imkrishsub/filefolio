@@ -564,8 +564,8 @@ async def upload_pdf(file: UploadFile = File(...)):
         except Exception as e:
             text_preview = f"Error extracting text: {str(e)}"
 
-        # Process document for AI tagging (but don't rename)
-        tags, category = process_document(text_preview, safe_filename)
+        # Process document for AI tagging and naming
+        tags, category, auto_filename = process_document(text_preview, safe_filename)
 
         # Move out of staging into uploads/<Category>/<Year>/. The filename may be
         # uniquified here, so the thumbnail is generated afterwards from the final
@@ -603,7 +603,7 @@ async def upload_pdf(file: UploadFile = File(...)):
             (
                 safe_filename,
                 stored_filename,
-                None,  # No auto-renaming
+                auto_filename,
                 file_path.relative_to(UPLOAD_DIR).as_posix(),
                 file_hash,
                 json.dumps(tags),
@@ -643,7 +643,7 @@ async def upload_pdf(file: UploadFile = File(...)):
     return {
         "id": doc_id,
         "original_filename": safe_filename,
-        "auto_filename": None,
+        "auto_filename": auto_filename,
         "tags": tags,
         "category": category,
         "preview": text_preview[:200],
@@ -700,6 +700,51 @@ def get_existing_tags():
     return list(all_tags)
 
 
+def _sanitize_auto_filename(raw, original_filename: str = "") -> Optional[str]:
+    """Turn a model-suggested name into a safe, storable filename.
+
+    The model is asked for a bare descriptive stem, but it is free-form text:
+    it may come back with directory separators, a path, an extension, quotes,
+    or nothing usable at all. Everything here is defensive.
+
+    Returns None when nothing usable survives, which leaves auto_filename NULL
+    and the UI falls back to the original filename.
+    """
+    if not isinstance(raw, str):
+        return None
+
+    # Drop any directory component before anything else -- the value must never
+    # be able to describe a path.
+    stem = raw.replace("\\", "/").split("/")[-1].strip().strip("\"'")
+    if not stem:
+        return None
+
+    # Strip a trailing extension so the model cannot pick one for us.
+    stem = re.sub(r"\.[A-Za-z0-9]{1,5}$", "", stem)
+
+    # Keep it lowercase, hyphenated and ASCII: these names end up on disk and
+    # in URLs across three operating systems.
+    stem = stem.lower().replace("_", "-")
+    stem = re.sub(r"[^a-z0-9-]+", "-", stem)
+    stem = re.sub(r"-{2,}", "-", stem).strip("-")
+
+    if not stem or not re.search(r"[a-z0-9]", stem):
+        return None
+
+    # Long names break layouts and hit path limits; 60 chars is generous for a
+    # descriptive stem. Trim on a word boundary where one is close by.
+    if len(stem) > 60:
+        stem = stem[:60].rstrip("-")
+        if "-" in stem[40:]:
+            stem = stem[: stem.rindex("-")]
+
+    ext = Path(original_filename).suffix.lower() or ".pdf"
+    if not re.fullmatch(r"\.[a-z0-9]{1,5}", ext):
+        ext = ".pdf"
+
+    return f"{stem}{ext}"
+
+
 def process_document(text: str, filename: str):
     """
     Extract metadata from document using local LLM via Ollama.
@@ -707,15 +752,18 @@ def process_document(text: str, filename: str):
     Uses the configured Ollama model (OLLAMA_MODEL) to analyze content and suggest:
     - Category: High-level classification (Invoice, Contract, Receipt, etc.)
     - Tags: Relevant keywords for organization and search
+    - Filename: A descriptive name for the document
 
-    Falls back to rule-based extraction if Ollama is unavailable.
+    Falls back to rule-based extraction if Ollama is unavailable. The rule-based
+    path suggests no filename, so auto_filename stays NULL and callers keep
+    showing the original name.
 
     Args:
         text: Extracted text content from the PDF
         filename: Original filename for context
 
     Returns:
-        Tuple of (tags: list[str], category: str)
+        Tuple of (tags: list[str], category: str, auto_filename: str | None)
     """
     # Get existing tags to encourage reuse
     existing_tags = get_existing_tags()
@@ -775,7 +823,7 @@ def process_document(text: str, filename: str):
         if "urgent" in text_lower:
             tags.append("urgent")
 
-        return tags, category
+        return tags, category, None
 
     # Try Ollama AI processing
     try:
@@ -801,6 +849,14 @@ Provide:
 1. A category - YOU MUST choose EXACTLY ONE from this list (use the exact spelling):
    Invoice, Receipt, Contract, Letter, Report, Form, Statement, Legal, Medical, Tax, Insurance, Other
 2. Relevant tags (3-5 SPECIFIC English keywords that describe what the document is about, NOT generic category names)
+3. A filename - a short descriptive name for this document, in English
+   - Follow this shape: issuer-document-type-month-year
+   - Take the issuer name from THIS document's text only
+   - Do NOT copy any organisation name from these instructions
+   - Do NOT reuse words from the original filename such as "scan", "document" or "untitled"
+   - Lowercase, words separated by hyphens, 3-6 words
+   - Include a month and year ONLY if the document clearly states one
+   - NO file extension, NO directory path, NO spaces or underscores
 
 Document excerpt:
 {text[:1000]}
@@ -810,7 +866,8 @@ Original filename: {filename}
 Respond in JSON format:
 {{
   "category": "category name",
-  "tags": ["specific_tag1", "specific_tag2", "specific_tag3"]
+  "tags": ["specific_tag1", "specific_tag2", "specific_tag3"],
+  "filename": "descriptive-document-name"
 }}"""
 
         response = ollama.chat(
@@ -831,6 +888,9 @@ Respond in JSON format:
             result = json.loads(json_match.group())
             raw_category = result.get("category", "Other")
             tags = result.get("tags", [])
+            auto_filename = _sanitize_auto_filename(
+                result.get("filename"), original_filename=filename
+            )
 
             # Normalize and validate category (strict matching)
             category = "Other"  # default fallback
@@ -892,7 +952,7 @@ Respond in JSON format:
                 )
                 return fallback_processing()
 
-            return filtered_tags, category
+            return filtered_tags, category, auto_filename
         else:
             return fallback_processing()
 

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "filefolio"
+version = "0.1.0"
+description = "Local, AI-tagged PDF document store"
+requires-python = ">=3.10"
+dependencies = ["httpx>=0.27.0"]
+
+# Installing the package gives you the `filefolio` command. The web app has
+# heavier dependencies (see requirements.txt); this covers the CLI only, which
+# talks to a running instance over HTTP.
+[project.scripts]
+filefolio = "backend.cli:main"
+
+[tool.setuptools]
+packages = ["backend"]

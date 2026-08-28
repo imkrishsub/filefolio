@@ -152,6 +152,30 @@ pytest
 
 Full API and functionality coverage including unit tests, integration tests, and frontend tests.
 
+## Command line (optional)
+
+Same operations as the web UI, against a running instance. Needs only the
+normal `venv/` — no MCP SDK.
+
+```bash
+python backend/cli.py search rent --category Invoice
+python backend/cli.py get 7
+python backend/cli.py upload ~/Downloads/receipt.pdf
+python backend/cli.py update 7 --tags finance,rent --category Tax
+python backend/cli.py download 7 ~/Desktop/rent.pdf
+```
+
+Add `--json` to `search`, `get`, `upload`, or `update` to get the raw API
+response for scripting. Errors go to stderr and exit non-zero. Set
+`FILEFOLIO_URL` to reach a non-default instance:
+
+```bash
+FILEFOLIO_URL=http://127.0.0.1:8080 python backend/cli.py search rent
+```
+
+Installing the package (`pip install -e .`) gives you a bare `filefolio`
+command that does the same thing from any directory.
+
 ## MCP server (optional)
 
 Lets other Claude Code sessions search, read, add, and re-tag documents in a running
@@ -203,6 +227,8 @@ Available tools: `filefolio_search`, `filefolio_get_document`, `filefolio_downlo
 filefolio/
 ├── backend/
 │   ├── main.py          # FastAPI server
+│   ├── client.py        # HTTP client shared by the CLI and MCP server
+│   ├── cli.py           # Command line
 │   ├── mcp_server.py    # MCP server (own venv, see below)
 │   └── sync_service.py  # Folder sync service
 ├── frontend/

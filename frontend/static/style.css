@@ -23,6 +23,9 @@
     --error-fill: #dc3545;
     --info-bg: #d1ecf1;
     --info-text: #0c5460;
+    --warning-bg: #fff3cd;
+    --warning-text: #7a5b00;
+    --warning-border: #ffe08a;
     --shadow-sm: 0 2px 8px rgba(0,0,0,0.05);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
     --shadow-lg: 0 10px 40px rgba(0,0,0,0.2);
@@ -56,6 +59,9 @@ body.dark-mode {
     --shadow-sm: 0 2px 8px rgba(0,0,0,0.3);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
     --shadow-lg: 0 10px 40px rgba(0,0,0,0.6);
+    --warning-bg: #3d3319;
+    --warning-text: #f0d68a;
+    --warning-border: #5c4a1f;
 }
 
 * {
@@ -1655,4 +1661,34 @@ body.dark-mode .icon-btn .sun-icon {
 .btn-secondary:hover {
     background: var(--hover-bg);
     border-color: var(--primary-color);
+}
+
+/* Ollama status banner — shown only when AI tagging is degraded */
+.ollama-banner {
+    background: var(--warning-bg);
+    color: var(--warning-text);
+    border: 1px solid var(--warning-border);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
+    font-size: 0.95rem;
+    line-height: 1.5;
+}
+
+.ollama-banner[hidden] {
+    display: none;
+}
+
+.ollama-banner code {
+    display: inline-block;
+    margin-top: 0.5rem;
+    padding: 0.2rem 0.5rem;
+    background: rgba(0, 0, 0, 0.08);
+    border-radius: 4px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.9em;
+}
+
+body.dark-mode .ollama-banner code {
+    background: rgba(255, 255, 255, 0.1);
 }

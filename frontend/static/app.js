@@ -96,6 +96,53 @@ function translateTag(tag) {
     return translated !== categoryKey ? translated : tag;
 }
 
+// Last /ollama-status payload, kept so the banner can be re-rendered on a
+// language switch without re-hitting the endpoint.
+let ollamaStatus = null;
+
+function renderOllamaBanner() {
+    const banner = document.getElementById('ollama-banner');
+    if (!banner) return;
+
+    // No status yet, or everything is working — say nothing.
+    if (!ollamaStatus || ollamaStatus.ok) {
+        banner.hidden = true;
+        banner.textContent = '';
+        return;
+    }
+
+    const model = ollamaStatus.model || '';
+    const isMissingModel = ollamaStatus.reason === 'model_missing';
+
+    const message = document.createElement('div');
+    message.textContent = isMissingModel
+        ? t('ollama.model_missing', { model })
+        : t('ollama.unreachable');
+
+    const hint = document.createElement('code');
+    hint.textContent = isMissingModel
+        ? `ollama pull ${model}`
+        : 'ollama serve';
+
+    banner.textContent = '';
+    banner.append(message, hint);
+    banner.hidden = false;
+}
+
+async function checkOllamaStatus() {
+    try {
+        const response = await fetch('/ollama-status');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        ollamaStatus = await response.json();
+    } catch (error) {
+        // The banner exists to explain degraded AI tagging. If the check itself
+        // fails we have nothing trustworthy to report, so stay quiet.
+        console.warn('Could not check Ollama status:', error);
+        ollamaStatus = null;
+    }
+    renderOllamaBanner();
+}
+
 function updatePageLanguage() {
     document.querySelectorAll('[data-i18n]').forEach(element => {
         const key = element.getAttribute('data-i18n');
@@ -112,6 +159,7 @@ function updatePageLanguage() {
     });
 
     renderDocuments();
+    renderOllamaBanner();
 }
 
 // Initialize dark mode from localStorage
@@ -148,6 +196,7 @@ async function init() {
 
     await loadDocuments(true);
     loadAllTags();
+    checkOllamaStatus();
 
     // Page loaded - trigger fade in animation
     document.body.classList.remove('page-loading');

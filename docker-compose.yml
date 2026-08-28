@@ -9,4 +9,5 @@ services:
       - ./thumbnails:/app/thumbnails
     environment:
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2}
     restart: unless-stopped

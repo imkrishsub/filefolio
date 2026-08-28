@@ -41,10 +41,7 @@ jobs:
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
-        # Install dependencies excluding rumps (macOS only)
-        grep -v "rumps" requirements.txt > requirements_ci.txt
-        pip install -r requirements_ci.txt
-        rm requirements_ci.txt
+        pip install -r requirements.txt
 
     - name: Lint with flake8
       run: |

@@ -39,7 +39,13 @@ Paperless-ngx is the most popular self-hosted alternative. Here's how they compa
 ## Prerequisites
 
 - Python 3.10+
-- [Ollama](https://ollama.ai) installed locally
+- [Ollama](https://ollama.ai) installed locally, with a model pulled:
+  ```bash
+  ollama pull llama3.2
+  ```
+  Without a model, FileFolio still files and searches your documents, but tagging
+  and naming fall back to simple keyword rules. See [Custom Ollama model](#custom-ollama-model)
+  to use a different one.
 - Poppler (for PDF processing)
   - macOS: `brew install poppler`
   - Ubuntu/Debian: `apt-get install poppler-utils`
@@ -79,9 +85,10 @@ git clone https://github.com/imkrishsub/filefolio.git
 cd filefolio
 ```
 
-2. **Start Ollama** (if not already running)
+2. **Start Ollama and pull the model** (if not already done)
 ```bash
 ollama serve
+ollama pull llama3.2
 ```
 
 3. **Start FileFolio**
@@ -113,9 +120,10 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-4. **Start Ollama** (in a separate terminal)
+4. **Start Ollama and pull the model** (in a separate terminal)
 ```bash
 ollama serve
+ollama pull llama3.2
 ```
 
 5. **Run the application**
@@ -137,6 +145,20 @@ PORT=8080 python backend/main.py
 # or with Docker:
 PORT=8080 docker compose up
 ```
+
+### Custom Ollama model
+
+FileFolio uses `llama3.2` by default. Point it at any model you have pulled:
+
+```bash
+OLLAMA_MODEL=qwen2.5 python backend/main.py
+# or with Docker:
+OLLAMA_MODEL=qwen2.5 docker compose up
+```
+
+If Ollama is unreachable or the configured model is not installed, FileFolio shows
+a banner in the interface and falls back to rule-based tagging rather than failing
+the upload.
 
 ### Custom Ollama URL
 

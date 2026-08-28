@@ -104,7 +104,9 @@
     "error.backup_failed": "Backup creation failed",
     "error.restore_failed": "Backup restoration failed",
     "error.export_failed": "Export failed",
-    "confirm.restore_backup": "This will replace all current data! Are you sure?"
+    "confirm.restore_backup": "This will replace all current data! Are you sure?",
+    "ollama.unreachable": "Ollama is not reachable, so AI tagging is off. Documents are still filed, but tags and names fall back to simple keyword rules.",
+    "ollama.model_missing": "The {model} model is not installed, so AI tagging is off. Documents are still filed, but tags and names fall back to simple keyword rules."
   },
   "es": {
     "app.title": "FileFolio",
@@ -206,7 +208,9 @@
     "error.backup_failed": "Error al crear copia de seguridad",
     "error.restore_failed": "Error al restaurar copia de seguridad",
     "error.export_failed": "Error al exportar",
-    "confirm.restore_backup": "¡Esto reemplazará todos los datos actuales! ¿Estás seguro?"
+    "confirm.restore_backup": "¡Esto reemplazará todos los datos actuales! ¿Estás seguro?",
+    "ollama.unreachable": "No se puede acceder a Ollama, por lo que el etiquetado con IA está desactivado. Los documentos se siguen archivando, pero las etiquetas y los nombres usan reglas simples de palabras clave.",
+    "ollama.model_missing": "El modelo {model} no está instalado, por lo que el etiquetado con IA está desactivado. Los documentos se siguen archivando, pero las etiquetas y los nombres usan reglas simples de palabras clave."
   },
   "fr": {
     "app.title": "FileFolio",
@@ -308,7 +312,9 @@
     "error.backup_failed": "Échec de la création de la sauvegarde",
     "error.restore_failed": "Échec de la restauration de la sauvegarde",
     "error.export_failed": "Échec de l'exportation",
-    "confirm.restore_backup": "Cela remplacera toutes les données actuelles ! Êtes-vous sûr ?"
+    "confirm.restore_backup": "Cela remplacera toutes les données actuelles ! Êtes-vous sûr ?",
+    "ollama.unreachable": "Ollama est inaccessible, l'étiquetage par IA est donc désactivé. Les documents sont toujours classés, mais les étiquettes et les noms reposent sur de simples règles de mots-clés.",
+    "ollama.model_missing": "Le modèle {model} n'est pas installé, l'étiquetage par IA est donc désactivé. Les documents sont toujours classés, mais les étiquettes et les noms reposent sur de simples règles de mots-clés."
   },
   "de": {
     "app.title": "FileFolio",
@@ -410,7 +416,9 @@
     "error.backup_failed": "Sicherung fehlgeschlagen",
     "error.restore_failed": "Wiederherstellung fehlgeschlagen",
     "error.export_failed": "Export fehlgeschlagen",
-    "confirm.restore_backup": "Dies ersetzt alle aktuellen Daten! Sind Sie sicher?"
+    "confirm.restore_backup": "Dies ersetzt alle aktuellen Daten! Sind Sie sicher?",
+    "ollama.unreachable": "Ollama ist nicht erreichbar, daher ist die KI-Verschlagwortung deaktiviert. Dokumente werden weiterhin abgelegt, aber Schlagwörter und Namen beruhen auf einfachen Stichwortregeln.",
+    "ollama.model_missing": "Das Modell {model} ist nicht installiert, daher ist die KI-Verschlagwortung deaktiviert. Dokumente werden weiterhin abgelegt, aber Schlagwörter und Namen beruhen auf einfachen Stichwortregeln."
   },
   "zh": {
     "app.title": "FileFolio",
@@ -512,6 +520,8 @@
     "error.backup_failed": "备份创建失败",
     "error.restore_failed": "备份还原失败",
     "error.export_failed": "导出失败",
-    "confirm.restore_backup": "这将替换所有当前数据！您确定吗？"
+    "confirm.restore_backup": "这将替换所有当前数据！您确定吗？",
+    "ollama.unreachable": "无法连接到 Ollama，AI 标记已关闭。文档仍会归档，但标签和名称将回退到简单的关键词规则。",
+    "ollama.model_missing": "未安装 {model} 模型，AI 标记已关闭。文档仍会归档，但标签和名称将回退到简单的关键词规则。"
   }
 }

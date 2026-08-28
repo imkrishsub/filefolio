@@ -1942,3 +1942,160 @@ class TestStagingIsCleanAfterRejectedUploads:
         )
         assert second.status_code == 409
         assert self._staging_entries() == []
+
+
+class TestOllamaModelConfiguration:
+    """OLLAMA_MODEL must drive the model actually sent to Ollama."""
+
+    def test_default_model_is_llama32(self):
+        import backend.main as main
+
+        assert main.OLLAMA_MODEL == "llama3.2"
+
+    def test_process_document_uses_configured_model(self, monkeypatch):
+        """The model name is read from the OLLAMA_MODEL constant, not hardcoded."""
+        import backend.main as main
+
+        captured = {}
+
+        def fake_chat(*args, **kwargs):
+            captured["model"] = kwargs.get("model")
+            return {
+                "message": {
+                    "content": '{"category": "Invoice", "tags": ["rent", "flat"]}'
+                }
+            }
+
+        monkeypatch.setattr(main, "OLLAMA_MODEL", "qwen2.5")
+        monkeypatch.setattr(main.ollama, "chat", fake_chat)
+        monkeypatch.setattr(main, "get_existing_tags", lambda: [])
+
+        tags, category = main.process_document("some invoice text", "doc.pdf")
+
+        assert captured["model"] == "qwen2.5"
+        assert category == "Invoice"
+        assert tags == ["rent", "flat"]
+
+
+class TestModelInstalledMatching:
+    """An untagged pull lands as '<name>:latest', so bare names must still match."""
+
+    def test_bare_name_matches_latest_tag(self):
+        import backend.main as main
+
+        assert main._model_is_installed("llama3.2", ["llama3.2:latest"]) is True
+
+    def test_bare_name_matches_other_tag(self):
+        import backend.main as main
+
+        assert main._model_is_installed("llama3.2", ["llama3.2:1b"]) is True
+
+    def test_bare_name_does_not_match_different_model(self):
+        import backend.main as main
+
+        assert main._model_is_installed("llama3.2", ["llama3.3:latest"]) is False
+
+    def test_explicit_tag_requires_exact_match(self):
+        import backend.main as main
+
+        assert main._model_is_installed("llama3.2:1b", ["llama3.2:latest"]) is False
+        assert main._model_is_installed("llama3.2:1b", ["llama3.2:1b"]) is True
+
+    def test_empty_install_list_matches_nothing(self):
+        import backend.main as main
+
+        assert main._model_is_installed("llama3.2", []) is False
+
+    def test_reads_dict_shaped_listing(self):
+        import backend.main as main
+
+        listing = {"models": [{"name": "llama3.2:latest"}, {"model": "mistral:latest"}]}
+        assert main._installed_model_names(listing) == [
+            "llama3.2:latest",
+            "mistral:latest",
+        ]
+
+    def test_reads_object_shaped_listing(self):
+        """Newer ollama clients return objects with a .model attribute."""
+        import backend.main as main
+
+        entry = MagicMock(spec=["model"])
+        entry.model = "llama3.2:latest"
+        listing = MagicMock(spec=["models"])
+        listing.models = [entry]
+
+        assert main._installed_model_names(listing) == ["llama3.2:latest"]
+
+
+class TestOllamaStatusEndpoint:
+    """/ollama-status tells the UI whether AI tagging is actually working."""
+
+    def test_ok_when_model_is_installed(self, client, monkeypatch):
+        import backend.main as main
+
+        monkeypatch.setattr(main, "OLLAMA_MODEL", "llama3.2")
+        monkeypatch.setattr(
+            main.ollama, "list", lambda: {"models": [{"name": "llama3.2:latest"}]}
+        )
+
+        response = client.get("/ollama-status")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert data["reason"] is None
+        assert data["model"] == "llama3.2"
+
+    def test_reports_model_missing(self, client, monkeypatch):
+        import backend.main as main
+
+        monkeypatch.setattr(main, "OLLAMA_MODEL", "llama3.2")
+        monkeypatch.setattr(
+            main.ollama, "list", lambda: {"models": [{"name": "mistral:latest"}]}
+        )
+
+        response = client.get("/ollama-status")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is False
+        assert data["reason"] == "model_missing"
+        assert data["installed"] == ["mistral:latest"]
+
+    def test_reports_unreachable(self, client, monkeypatch):
+        """A down Ollama is a reported result, not a 500."""
+        import backend.main as main
+
+        def boom():
+            raise ConnectionError("connection refused")
+
+        monkeypatch.setattr(main.ollama, "list", boom)
+
+        response = client.get("/ollama-status")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is False
+        assert data["reason"] == "unreachable"
+        assert "connection refused" in data["detail"]
+        assert data["installed"] == []
+
+    def test_upload_still_succeeds_without_ollama(
+        self, client, test_db, sample_pdf_bytes, monkeypatch
+    ):
+        """Degraded tagging must never block filing a document."""
+        import backend.main as main
+
+        def boom(*args, **kwargs):
+            raise ConnectionError("connection refused")
+
+        monkeypatch.setattr(main.ollama, "chat", boom)
+        monkeypatch.setattr(main, "generate_thumbnail", lambda path, name: None)
+
+        response = client.post(
+            "/upload",
+            files={"file": ("no-ollama.pdf", sample_pdf_bytes, "application/pdf")},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["category"] in main.storage.VALID_CATEGORIES

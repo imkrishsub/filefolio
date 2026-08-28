@@ -11,7 +11,7 @@ This application processes PDF documents through the following pipeline:
 Key design decisions:
 - Privacy-first: All processing happens locally, no external API calls
 - SQLite FTS5: Enables fast full-text search across document content
-- Ollama integration: Uses local LLMs (llama3.2-vision) for document analysis
+- Ollama integration: Uses a local LLM (OLLAMA_MODEL, default llama3.2) for document analysis
 """
 
 import hashlib
@@ -43,6 +43,10 @@ from pydantic import BaseModel
 app = FastAPI()
 
 logger = logging.getLogger(__name__)
+
+# Local LLM used for tagging and categorisation. Override to run a different
+# Ollama model (e.g. OLLAMA_MODEL=qwen2.5 or mistral) without editing the source.
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")
 
 # File size limits
 MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100 MB — single PDF upload
@@ -700,7 +704,7 @@ def process_document(text: str, filename: str):
     """
     Extract metadata from document using local LLM via Ollama.
 
-    Uses llama3.2-vision model to analyze document content and suggest:
+    Uses the configured Ollama model (OLLAMA_MODEL) to analyze content and suggest:
     - Category: High-level classification (Invoice, Contract, Receipt, etc.)
     - Tags: Relevant keywords for organization and search
 
@@ -810,7 +814,7 @@ Respond in JSON format:
 }}"""
 
         response = ollama.chat(
-            model="llama3.2", messages=[{"role": "user", "content": prompt}]
+            model=OLLAMA_MODEL, messages=[{"role": "user", "content": prompt}]
         )
 
         # Parse response
@@ -895,6 +899,86 @@ Respond in JSON format:
     except Exception as e:
         print(f"Ollama processing failed: {e}, falling back to rule-based")
         return fallback_processing()
+
+
+def _installed_model_names(listing) -> List[str]:
+    """Pull model names out of an ollama.list() response.
+
+    The ollama client has returned both plain dicts and objects with attributes
+    across versions, so read either shape rather than pinning to one.
+    """
+    models = getattr(listing, "models", None)
+    if models is None and isinstance(listing, dict):
+        models = listing.get("models", [])
+    names = []
+    for entry in models or []:
+        name = getattr(entry, "model", None) or getattr(entry, "name", None)
+        if name is None and isinstance(entry, dict):
+            name = entry.get("model") or entry.get("name")
+        if name:
+            names.append(str(name))
+    return names
+
+
+def _model_is_installed(model: str, installed: List[str]) -> bool:
+    """True if `model` matches an installed tag.
+
+    Ollama stores an untagged pull as "<name>:latest", so a configured
+    "llama3.2" must match an installed "llama3.2:latest".
+    """
+    if ":" in model:
+        return model in installed
+    return any(name == model or name.startswith(f"{model}:") for name in installed)
+
+
+def check_ollama_status() -> dict:
+    """Report whether Ollama is reachable and the configured model is pulled.
+
+    A fresh install that never ran `ollama pull` still uploads fine — the tagger
+    falls back to rule-based extraction — but the AI tagging silently does
+    nothing. The UI needs to say so instead of leaving the user to guess.
+
+    Returns a dict with:
+        ok:        True only if Ollama answered and the model is present
+        model:     the configured model name
+        reason:    None, "unreachable", or "model_missing"
+        detail:    connection error text, for "unreachable"
+        installed: model names Ollama reported
+    """
+    try:
+        installed = _installed_model_names(ollama.list())
+    except Exception as e:
+        logger.warning("Ollama is not reachable: %s", e)
+        return {
+            "ok": False,
+            "model": OLLAMA_MODEL,
+            "reason": "unreachable",
+            "detail": str(e),
+            "installed": [],
+        }
+
+    if not _model_is_installed(OLLAMA_MODEL, installed):
+        return {
+            "ok": False,
+            "model": OLLAMA_MODEL,
+            "reason": "model_missing",
+            "detail": None,
+            "installed": installed,
+        }
+
+    return {
+        "ok": True,
+        "model": OLLAMA_MODEL,
+        "reason": None,
+        "detail": None,
+        "installed": installed,
+    }
+
+
+@app.get("/ollama-status")
+async def ollama_status():
+    """Ollama health for the UI banner. Never raises — a failed check is a result."""
+    return check_ollama_status()
 
 
 def _sanitize_fts_query(raw: str) -> str:

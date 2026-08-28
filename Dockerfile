@@ -9,8 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY requirements.txt .
-# rumps is macOS-only (system tray); skip it on Linux
-RUN pip install --no-cache-dir $(grep -v '^rumps' requirements.txt | grep -v '^#' | grep -v '^$' | tr '\n' ' ')
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ ./backend/
 COPY frontend/ ./frontend/

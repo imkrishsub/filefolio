@@ -8,6 +8,8 @@ Run with: venv-mcp/bin/python -m pytest --noconftest tests/test_mcp_server.py
 scope, which is not installed in venv-mcp/).
 """
 
+import json
+
 import httpx
 import pytest
 
@@ -257,3 +259,112 @@ class TestFilefolioUpload:
 
         with pytest.raises(RuntimeError, match="Not a PDF file"):
             await mcp_server.filefolio_upload(str(txt_path))
+
+
+class TestFilefolioUpdate:
+    @pytest.mark.asyncio
+    async def test_update_sends_only_provided_fields_and_returns_document(
+        self, monkeypatch
+    ):
+        seen = {}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "PUT":
+                assert request.url.path == "/document/7"
+                seen["body"] = json.loads(request.content)
+                return httpx.Response(
+                    200, json={"success": True, "message": "Document updated"}
+                )
+            assert request.url.path == "/documents/7"
+            return httpx.Response(
+                200,
+                json={
+                    "id": 7,
+                    "auto_filename": "2026-08-18_invoice.pdf",
+                    "category": "Tax",
+                    "tags": ["finance", "2026"],
+                },
+            )
+
+        monkeypatch.setattr(mcp_server, "_make_client", _client_with_handler(handler))
+
+        result = await mcp_server.filefolio_update(
+            7, tags=["finance", "2026"], category="Tax"
+        )
+
+        # filename was not passed, so it must be absent from the body -- sending
+        # auto_filename=None would be indistinguishable from "leave unchanged"
+        # only by luck; the backend treats a missing key as "leave unchanged".
+        assert seen["body"] == {"tags": ["finance", "2026"], "category": "Tax"}
+        assert result["category"] == "Tax"
+        assert result["tags"] == ["finance", "2026"]
+
+    @pytest.mark.asyncio
+    async def test_update_maps_filename_to_auto_filename(self, monkeypatch):
+        seen = {}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            if request.method == "PUT":
+                seen["body"] = json.loads(request.content)
+                return httpx.Response(200, json={"success": True})
+            return httpx.Response(200, json={"id": 3, "auto_filename": "renamed.pdf"})
+
+        monkeypatch.setattr(mcp_server, "_make_client", _client_with_handler(handler))
+
+        await mcp_server.filefolio_update(3, filename="renamed.pdf")
+
+        assert seen["body"] == {"auto_filename": "renamed.pdf"}
+
+    @pytest.mark.asyncio
+    async def test_update_with_no_fields_raises_without_calling_api(self, monkeypatch):
+        async def handler(request: httpx.Request) -> httpx.Response:
+            raise AssertionError("no HTTP request should be made")
+
+        monkeypatch.setattr(mcp_server, "_make_client", _client_with_handler(handler))
+
+        with pytest.raises(RuntimeError, match="Nothing to update"):
+            await mcp_server.filefolio_update(1)
+
+    @pytest.mark.asyncio
+    async def test_update_invalid_category_raises_without_calling_api(
+        self, monkeypatch
+    ):
+        async def handler(request: httpx.Request) -> httpx.Response:
+            raise AssertionError("no HTTP request should be made")
+
+        monkeypatch.setattr(mcp_server, "_make_client", _client_with_handler(handler))
+
+        with pytest.raises(RuntimeError, match="Invalid category 'Groceries'"):
+            await mcp_server.filefolio_update(1, category="Groceries")
+
+    @pytest.mark.asyncio
+    async def test_update_not_found_raises(self, monkeypatch):
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(404, json={"detail": "Document not found"})
+
+        monkeypatch.setattr(mcp_server, "_make_client", _client_with_handler(handler))
+
+        with pytest.raises(RuntimeError, match="Document 999 not found"):
+            await mcp_server.filefolio_update(999, category="Tax")
+
+    @pytest.mark.asyncio
+    async def test_update_api_error_surfaces_detail(self, monkeypatch):
+        async def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                500, json={"detail": "Could not move the document file"}
+            )
+
+        monkeypatch.setattr(mcp_server, "_make_client", _client_with_handler(handler))
+
+        with pytest.raises(RuntimeError, match="Could not move the document file"):
+            await mcp_server.filefolio_update(4, category="Tax")
+
+    @pytest.mark.asyncio
+    async def test_update_connection_error_raises_clear_message(self, monkeypatch):
+        async def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("refused", request=request)
+
+        monkeypatch.setattr(mcp_server, "_make_client", _client_with_handler(handler))
+
+        with pytest.raises(RuntimeError, match="FileFolio not running"):
+            await mcp_server.filefolio_update(1, category="Tax")

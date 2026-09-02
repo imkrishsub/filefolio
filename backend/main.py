@@ -24,6 +24,7 @@ import shutil
 import sqlite3
 import tempfile
 import urllib.parse
+import uuid
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -729,6 +730,49 @@ async def pdf_merge(request: PdfMergeRequest):
             background=BackgroundTask(merged.unlink, missing_ok=True),
         )
     return ingest_pdf(merged, "merged.pdf", source_label="pdf-merge")
+
+
+class PdfSplitRequest(BaseModel):
+    document_id: int
+    ranges: str
+    file: bool = True
+
+
+@app.post("/pdf/split")
+async def pdf_split(request: PdfSplitRequest):
+    source = _resolved_pdf_path(_load_doc_or_404(request.document_id))
+    try:
+        groups = pdf_ops.parse_page_ranges(request.ranges, pdf_ops.page_count(source))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    staging = storage.staging_dir(UPLOAD_DIR)
+    staging.mkdir(parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(dir=staging, prefix="split_"))
+    try:
+        parts = pdf_ops.split(source, groups, work)
+        if not request.file:
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for part in parts:
+                    zf.write(part, arcname=part.name)
+            buf.seek(0)
+            return StreamingResponse(
+                buf,
+                media_type="application/zip",
+                headers={"Content-Disposition": 'attachment; filename="split.zip"'},
+            )
+        results = []
+        for part in parts:
+            staged = staging / (
+                f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_"
+                f"{uuid.uuid4().hex[:8]}_{part.name}"
+            )
+            part.replace(staged)
+            results.append(ingest_pdf(staged, part.name, source_label="pdf-split"))
+        return results
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 def generate_thumbnail(pdf_path: Path, stored_filename: str):

@@ -2341,3 +2341,33 @@ class TestPdfMerge:
         assert first.status_code == 200
         r = client.post("/pdf/merge", json={"document_ids": [a, b]})
         assert r.status_code == 409
+
+
+class TestPdfSplit:
+    def _upload(self, client, pdf_bytes, name="m.pdf"):
+        r = client.post("/upload", files={"file": (name, io.BytesIO(pdf_bytes), "application/pdf")})
+        return r.json()["id"]
+
+    def test_split_files_one_document_per_group(self, client, multipage_pdf_bytes, mock_ollama_response):
+        doc = self._upload(client, multipage_pdf_bytes)
+        r = client.post("/pdf/split", json={"document_id": doc, "ranges": "1-2,3-5"})
+        assert r.status_code == 200
+        body = r.json()
+        assert isinstance(body, list) and len(body) == 2
+
+    def test_split_download_only_returns_zip(self, client, multipage_pdf_bytes, mock_ollama_response):
+        doc = self._upload(client, multipage_pdf_bytes)
+        r = client.post("/pdf/split", json={"document_id": doc, "ranges": "1,2-5", "file": False})
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "application/zip"
+        z = zipfile.ZipFile(io.BytesIO(r.content))
+        assert len(z.namelist()) == 2
+
+    def test_split_bad_range_is_400(self, client, multipage_pdf_bytes, mock_ollama_response):
+        doc = self._upload(client, multipage_pdf_bytes)
+        r = client.post("/pdf/split", json={"document_id": doc, "ranges": "9-20"})
+        assert r.status_code == 400
+
+    def test_split_unknown_doc_is_404(self, client):
+        r = client.post("/pdf/split", json={"document_id": 55555, "ranges": "1"})
+        assert r.status_code == 404

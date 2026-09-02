@@ -412,6 +412,46 @@ class TestPdfOperations:
         with pytest.raises(RuntimeError):
             await client.pdf_ocr(5)
 
+    @pytest.mark.asyncio
+    async def test_merge_download_to_missing_dir_raises_without_calling_api(
+        self, monkeypatch
+    ):
+        async def handler(request):
+            raise AssertionError("no HTTP request should be made")
+        monkeypatch.setattr(client, "_make_client", _client_with_handler(handler))
+        with pytest.raises(RuntimeError, match="Destination directory does not exist"):
+            await client.pdf_merge([1, 2], download_to="/no/such/dir/x.pdf")
+
+    @pytest.mark.asyncio
+    async def test_extract_download_to_missing_dir_raises_without_calling_api(
+        self, monkeypatch
+    ):
+        async def handler(request):
+            raise AssertionError("no HTTP request should be made")
+        monkeypatch.setattr(client, "_make_client", _client_with_handler(handler))
+        with pytest.raises(RuntimeError, match="Destination directory does not exist"):
+            await client.pdf_extract(1, "1", download_to="/no/such/dir/x.pdf")
+
+    @pytest.mark.asyncio
+    async def test_delete_pages_download_to_missing_dir_raises_without_calling_api(
+        self, monkeypatch
+    ):
+        async def handler(request):
+            raise AssertionError("no HTTP request should be made")
+        monkeypatch.setattr(client, "_make_client", _client_with_handler(handler))
+        with pytest.raises(RuntimeError, match="Destination directory does not exist"):
+            await client.pdf_delete_pages(1, "1", download_to="/no/such/dir/x.pdf")
+
+    @pytest.mark.asyncio
+    async def test_split_download_dir_missing_raises_without_calling_api(
+        self, monkeypatch
+    ):
+        async def handler(request):
+            raise AssertionError("no HTTP request should be made")
+        monkeypatch.setattr(client, "_make_client", _client_with_handler(handler))
+        with pytest.raises(RuntimeError, match="Destination directory does not exist"):
+            await client.pdf_split(1, "1,2", download_dir="/no/such/dir")
+
     def test_parse_page_ranges_without_count(self):
         assert client.parse_page_ranges("1-3,5") == [[1, 2, 3], [5]]
         with pytest.raises(ValueError):

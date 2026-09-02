@@ -287,6 +287,10 @@ def _one_based(value: str, page_count: Optional[int] = None) -> int:
 async def pdf_merge(doc_ids, *, download_to=None):
     """Merge documents into one. Files the result, or writes it to download_to."""
     payload = {"document_ids": list(doc_ids), "file": download_to is None}
+    if download_to is not None and not Path(download_to).parent.is_dir():
+        raise RuntimeError(
+            f"Destination directory does not exist: {Path(download_to).parent}"
+        )
     async with _make_client(timeout=120.0) as http:
         try:
             resp = await http.post("/pdf/merge", json=payload)
@@ -308,6 +312,8 @@ async def pdf_split(doc_id, ranges, *, download_dir=None):
     """Split a document by page ranges. Files each part, or unzips them into
     download_dir and returns the written paths."""
     payload = {"document_id": doc_id, "ranges": ranges, "file": download_dir is None}
+    if download_dir is not None and not Path(download_dir).is_dir():
+        raise RuntimeError(f"Destination directory does not exist: {download_dir}")
     async with _make_client(timeout=300.0) as http:
         try:
             resp = await http.post("/pdf/split", json=payload)
@@ -336,6 +342,10 @@ async def pdf_split(doc_id, ranges, *, download_dir=None):
 async def pdf_extract(doc_id, pages, *, download_to=None):
     """Extract the given pages into a new document, or write it to download_to."""
     payload = {"document_id": doc_id, "pages": pages, "file": download_to is None}
+    if download_to is not None and not Path(download_to).parent.is_dir():
+        raise RuntimeError(
+            f"Destination directory does not exist: {Path(download_to).parent}"
+        )
     async with _make_client(timeout=120.0) as http:
         try:
             resp = await http.post("/pdf/extract", json=payload)
@@ -356,6 +366,10 @@ async def pdf_extract(doc_id, pages, *, download_to=None):
 async def pdf_delete_pages(doc_id, pages, *, download_to=None):
     """Delete the given pages, filing the result or writing it to download_to."""
     payload = {"document_id": doc_id, "pages": pages, "file": download_to is None}
+    if download_to is not None and not Path(download_to).parent.is_dir():
+        raise RuntimeError(
+            f"Destination directory does not exist: {Path(download_to).parent}"
+        )
     async with _make_client(timeout=120.0) as http:
         try:
             resp = await http.post("/pdf/delete-pages", json=payload)

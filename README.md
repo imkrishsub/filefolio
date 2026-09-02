@@ -241,7 +241,62 @@ claude mcp add filefolio -s user -e FILEFOLIO_URL=http://127.0.0.1:8080 -- "$PWD
 ```
 
 Available tools: `filefolio_search`, `filefolio_get_document`, `filefolio_download`,
-`filefolio_upload`, `filefolio_update`.
+`filefolio_upload`, `filefolio_update`, `filefolio_pdf_merge`, `filefolio_pdf_split`,
+`filefolio_pdf_extract`, `filefolio_pdf_delete_pages`, `filefolio_pdf_rotate`,
+`filefolio_pdf_ocr`.
+
+## PDF tools
+
+FileFolio can merge, split, rotate, OCR, and trim pages from stored PDFs. The same
+operations are reachable from the web UI, the command line, and the MCP server.
+
+### Web UI
+
+Select two or more documents and a Merge button (a floating action button) files
+them into one new document. Each document also has a Tools menu with Rotate, Split,
+Extract pages, Delete pages, and Make searchable. The operations that produce a new
+document offer a "Download only, do not file" checkbox.
+
+### Command line
+
+```bash
+filefolio pdf merge 12 15 3
+filefolio pdf split 12 "1-3,4-"
+filefolio pdf extract 12 "2"
+filefolio pdf delete-pages 12 "1"
+filefolio pdf rotate 12 --degrees 90
+filefolio pdf ocr 12
+```
+
+Page ranges accept comma-separated single pages and spans, with an open-ended
+upper bound (`"1-3,5,8-"`). Add `--download OUT.pdf` (merge, extract, delete-pages)
+or `--download-dir DIR` (split) to save the result instead of filing it, and
+`--json` to print the raw API payload.
+
+### MCP
+
+- `filefolio_pdf_merge` — merge documents into one new filed document.
+- `filefolio_pdf_split` — split a document by page ranges; files each part.
+- `filefolio_pdf_extract` — keep only the given pages as a new document.
+- `filefolio_pdf_delete_pages` — drop the given pages and file the rest.
+- `filefolio_pdf_rotate` — rotate pages 90, 180, or 270 degrees in place.
+- `filefolio_pdf_ocr` — add a searchable text layer in place.
+
+### Behaviour
+
+Merge, split, extract, and delete-pages create new documents that are filed
+through the same AI tagging pipeline as uploads (or, with the download option,
+just hand you the file). Rotate and Make searchable (OCR) edit the document in
+place, keeping its id, tags, category, and upload date.
+
+### OCR dependencies
+
+Make searchable / `filefolio pdf ocr` needs `ocrmypdf`, `ghostscript`, and
+`unpaper` on PATH. The Docker image bundles them.
+
+- macOS: `brew install ocrmypdf`
+- Debian/Ubuntu: `apt install ocrmypdf`
+- Windows: `pip install ocrmypdf` plus the Ghostscript installer
 
 ## Project structure
 

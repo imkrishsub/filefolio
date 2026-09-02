@@ -231,12 +231,20 @@ async def update(
 # still does the authoritative bounds check; this is a fast client-side reject.
 
 
-def parse_page_ranges(spec: str, page_count: Optional[int] = None) -> list[list[int]]:
+def parse_page_ranges(
+    spec: str,
+    page_count: Optional[int] = None,
+    *,
+    allow_open_ended: bool = False,
+) -> list[list[int]]:
     """Parse a print-dialog page spec into comma groups of 1-indexed pages.
 
     Grammar: ``1-3,5,8-`` -- 1-indexed, inclusive, ``N-`` meaning "N to the last
     page". When ``page_count`` is None the upper-bound check is skipped and an
-    open-ended ``N-`` range raises ValueError (there is no last page to resolve).
+    open-ended ``N-`` range raises ValueError (there is no last page to resolve),
+    unless ``allow_open_ended`` is set -- then ``N-`` is valid syntax and is
+    emitted as the placeholder ``[N]``; callers using that mode only care whether
+    parsing raised, and the server does the real "to last page" expansion.
     Raises ValueError on anything malformed.
     """
     if page_count is not None and page_count < 1:
@@ -258,6 +266,11 @@ def parse_page_ranges(spec: str, page_count: Optional[int] = None) -> list[list[
             start = _one_based(start_s, page_count)
             if end_s == "":
                 if page_count is None:
+                    if allow_open_ended:
+                        # Valid syntax; the server resolves "N-" against the real
+                        # page count. Placeholder only -- callers discard the result.
+                        groups.append([start])
+                        continue
                     raise ValueError("open-ended range needs a page count")
                 end = page_count
             else:
@@ -315,7 +328,7 @@ async def pdf_split(doc_id, ranges, *, download_dir=None):
     if download_dir is not None and not Path(download_dir).is_dir():
         raise RuntimeError(f"Destination directory does not exist: {download_dir}")
     try:
-        parse_page_ranges(ranges)
+        parse_page_ranges(ranges, allow_open_ended=True)  # syntax check; server resolves "N-" and bounds
     except ValueError as exc:
         raise RuntimeError(f"Invalid page range: {exc}")
     async with _make_client(timeout=300.0) as http:
@@ -351,7 +364,7 @@ async def pdf_extract(doc_id, pages, *, download_to=None):
             f"Destination directory does not exist: {Path(download_to).parent}"
         )
     try:
-        parse_page_ranges(pages)
+        parse_page_ranges(pages, allow_open_ended=True)  # syntax check; server resolves "N-" and bounds
     except ValueError as exc:
         raise RuntimeError(f"Invalid page range: {exc}")
     async with _make_client(timeout=120.0) as http:
@@ -379,7 +392,7 @@ async def pdf_delete_pages(doc_id, pages, *, download_to=None):
             f"Destination directory does not exist: {Path(download_to).parent}"
         )
     try:
-        parse_page_ranges(pages)
+        parse_page_ranges(pages, allow_open_ended=True)  # syntax check; server resolves "N-" and bounds
     except ValueError as exc:
         raise RuntimeError(f"Invalid page range: {exc}")
     async with _make_client(timeout=120.0) as http:

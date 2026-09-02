@@ -473,6 +473,28 @@ class TestPdfOperations:
         with pytest.raises(RuntimeError, match="Invalid page range"):
             await client.pdf_extract(1, "abc")
 
+    @pytest.mark.asyncio
+    async def test_split_open_ended_range_reaches_the_server(self, monkeypatch):
+        seen = {}
+        async def handler(request):
+            seen["path"] = request.url.path
+            return httpx.Response(200, json=[{"id": 7}, {"id": 8}])
+        monkeypatch.setattr(client, "_make_client", _client_with_handler(handler))
+        result = await client.pdf_split(1, "1-3,4-")
+        assert seen["path"] == "/pdf/split"
+        assert result == [{"id": 7}, {"id": 8}]
+
+    @pytest.mark.asyncio
+    async def test_extract_open_ended_range_reaches_the_server(self, monkeypatch):
+        seen = {}
+        async def handler(request):
+            seen["path"] = request.url.path
+            return httpx.Response(200, json={"id": 9})
+        monkeypatch.setattr(client, "_make_client", _client_with_handler(handler))
+        result = await client.pdf_extract(1, "8-")
+        assert seen["path"] == "/pdf/extract"
+        assert result == {"id": 9}
+
     def test_client_and_pdf_ops_page_range_parsers_agree(self):
         from backend import pdf_ops
 
@@ -484,6 +506,8 @@ class TestPdfOperations:
                 client.parse_page_ranges(bad, 5)
             with pytest.raises(ValueError):
                 pdf_ops.parse_page_ranges(bad, 5)
+        # Open-ended token: valid syntax, no count needed in this mode.
+        assert client.parse_page_ranges("1-3,4-", allow_open_ended=True) == [[1, 2, 3], [4]]
 
 
 class TestValidCategories:

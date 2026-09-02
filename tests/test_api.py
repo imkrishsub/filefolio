@@ -201,6 +201,22 @@ class TestUploadEndpoint:
         )
         assert response.status_code == 400
 
+    def test_ingest_pdf_files_a_staged_pdf(self, test_db, multipage_pdf_bytes, mock_ollama_response):
+        """ingest_pdf() is the shared pipeline; a staged PDF lands in the store."""
+        import backend.main as main
+        from backend import storage
+
+        staging = storage.staging_dir(main.UPLOAD_DIR)
+        staging.mkdir(parents=True, exist_ok=True)
+        staged = staging / "20260902_120000_report.pdf"
+        staged.write_bytes(multipage_pdf_bytes)
+
+        result = main.ingest_pdf(staged, "report.pdf", source_label="test")
+
+        assert result["id"] > 0
+        assert result["original_filename"] == "report.pdf"
+        assert not staged.exists()  # moved out of staging
+
 
 class TestUploadStorageLayout:
     """Uploads land under uploads/<Category>/<Year>/ with a relative DB path."""

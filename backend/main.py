@@ -431,71 +431,31 @@ async def read_root():
     return FileResponse(html_file)
 
 
-@app.post("/upload")
-async def upload_pdf(file: UploadFile = File(...)):
+def ingest_pdf(
+    staged_path: Path, original_filename: str, *, source_label: str = "upload"
+) -> dict:
+    """File a validated, staged PDF: dedup, extract text (+OCR), AI tag, place, thumbnail, index.
+
+    ``staged_path`` must be an already-validated PDF sitting inside
+    ``storage.staging_dir(UPLOAD_DIR)`` and named ``<timestamp>_<safe filename>``.
+    Removes ``staged_path`` on any failure. Returns the new document's metadata:
+    ``{"id", "original_filename", "auto_filename", "tags", "category", "preview"}``.
+    Raises ``HTTPException`` (400 bad/empty/encrypted PDF, 409 duplicate,
+    500 storage failure) exactly as the ``/upload`` endpoint does.
     """
-    Upload and process a PDF document.
+    logger.info("Ingesting staged PDF from %s: %s", source_label, original_filename)
 
-    This endpoint handles the complete document ingestion pipeline:
-    1. Validates the file is a PDF
-    2. Saves with timestamped filename and calculates SHA-256 hash
-    3. Checks for duplicates using the hash
-    4. Extracts text using PyPDF, falls back to OCR for scanned documents
-    5. Generates thumbnail from first page
-    6. Uses local LLM to suggest category and tags
-    7. Stores metadata in SQLite with full-text search index
-
-    Returns: Document metadata including suggested tags and category
-    """
-    # Strip any directory components from the browser-supplied filename
-    raw_filename = file.filename or ""
-    safe_filename = Path(raw_filename.replace("\\", "/")).name
-    if not safe_filename or "\x00" in safe_filename:
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    if not safe_filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
-
-    # Stage the upload: the category, and therefore the destination folder, is not
-    # known until the text has been extracted and processed.
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    stored_filename = f"{timestamp}_{safe_filename}"
-    staging = storage.staging_dir(UPLOAD_DIR)
-    staging.mkdir(parents=True, exist_ok=True)
-    file_path = staging / stored_filename
-
-    # Stream to disk, enforcing size limit and calculating SHA-256 hash in one pass
-    sha256_hash = hashlib.sha256()
-    bytes_written = 0
-    first_chunk = True
-    with file_path.open("wb") as buffer:
-        while chunk := await file.read(8192):
-            if first_chunk:
-                if chunk[:4] != b"%PDF":
-                    file_path.unlink(missing_ok=True)
-                    raise HTTPException(
-                        status_code=400, detail="File is not a valid PDF"
-                    )
-                first_chunk = False
-            bytes_written += len(chunk)
-            if bytes_written > MAX_UPLOAD_SIZE:
-                file_path.unlink(missing_ok=True)
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"File too large. Maximum upload size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB.",
-                )
-            sha256_hash.update(chunk)
-            buffer.write(chunk)
-
-    file_hash = sha256_hash.hexdigest()
+    stored_filename = staged_path.name
+    file_path = staged_path
+    file_hash = hashlib.sha256(staged_path.read_bytes()).hexdigest()
 
     # Everything from here until place() succeeds runs with the PDF sitting in the
     # hidden staging directory, which nothing else garbage-collects: it is excluded
     # from backups and from the migration's recovery search. Any failure in between
     # -- a database error, get_existing_tags(), Ollama, a failed move -- must take
     # the staged file with it, so the whole stretch is wrapped in a cleanup handler.
-    staged_path = file_path
     try:
-        if bytes_written == 0:
+        if staged_path.stat().st_size == 0:
             raise HTTPException(
                 status_code=400, detail="Empty file. Please upload a non-empty PDF."
             )
@@ -565,7 +525,9 @@ async def upload_pdf(file: UploadFile = File(...)):
             text_preview = f"Error extracting text: {str(e)}"
 
         # Process document for AI tagging and naming
-        tags, category, auto_filename = process_document(text_preview, safe_filename)
+        tags, category, auto_filename = process_document(
+            text_preview, original_filename
+        )
 
         # Move out of staging into uploads/<Category>/<Year>/. The filename may be
         # uniquified here, so the thumbnail is generated afterwards from the final
@@ -601,7 +563,7 @@ async def upload_pdf(file: UploadFile = File(...)):
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
             (
-                safe_filename,
+                original_filename,
                 stored_filename,
                 auto_filename,
                 file_path.relative_to(UPLOAD_DIR).as_posix(),
@@ -642,12 +604,70 @@ async def upload_pdf(file: UploadFile = File(...)):
 
     return {
         "id": doc_id,
-        "original_filename": safe_filename,
+        "original_filename": original_filename,
         "auto_filename": auto_filename,
         "tags": tags,
         "category": category,
         "preview": text_preview[:200],
     }
+
+
+@app.post("/upload")
+async def upload_pdf(file: UploadFile = File(...)):
+    """
+    Upload and process a PDF document.
+
+    This endpoint handles the complete document ingestion pipeline:
+    1. Validates the file is a PDF
+    2. Saves with timestamped filename and calculates SHA-256 hash
+    3. Checks for duplicates using the hash
+    4. Extracts text using PyPDF, falls back to OCR for scanned documents
+    5. Generates thumbnail from first page
+    6. Uses local LLM to suggest category and tags
+    7. Stores metadata in SQLite with full-text search index
+
+    Returns: Document metadata including suggested tags and category
+    """
+    # Strip any directory components from the browser-supplied filename
+    raw_filename = file.filename or ""
+    safe_filename = Path(raw_filename.replace("\\", "/")).name
+    if not safe_filename or "\x00" in safe_filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not safe_filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+
+    # Stage the upload: the category, and therefore the destination folder, is not
+    # known until the text has been extracted and processed.
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    stored_filename = f"{timestamp}_{safe_filename}"
+    staging = storage.staging_dir(UPLOAD_DIR)
+    staging.mkdir(parents=True, exist_ok=True)
+    file_path = staging / stored_filename
+
+    # Stream to disk, enforcing the size limit and the %PDF magic bytes as the file
+    # arrives. ingest_pdf() recomputes the hash from the staged file, so nothing here
+    # needs to survive past the point where the file is fully written.
+    bytes_written = 0
+    first_chunk = True
+    with file_path.open("wb") as buffer:
+        while chunk := await file.read(8192):
+            if first_chunk:
+                if chunk[:4] != b"%PDF":
+                    file_path.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=400, detail="File is not a valid PDF"
+                    )
+                first_chunk = False
+            bytes_written += len(chunk)
+            if bytes_written > MAX_UPLOAD_SIZE:
+                file_path.unlink(missing_ok=True)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large. Maximum upload size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB.",
+                )
+            buffer.write(chunk)
+
+    return ingest_pdf(file_path, safe_filename)
 
 
 def generate_thumbnail(pdf_path: Path, stored_filename: str):

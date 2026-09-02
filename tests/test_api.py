@@ -2295,3 +2295,49 @@ class TestUploadPersistsAutoFilename:
 
         assert response.status_code == 200
         assert response.json()["auto_filename"] is None
+
+
+class TestPdfMerge:
+    def _upload(self, client, pdf_bytes, name):
+        r = client.post("/upload", files={"file": (name, io.BytesIO(pdf_bytes), "application/pdf")})
+        assert r.status_code == 200
+        return r.json()["id"]
+
+    def test_merge_files_a_new_document(self, client, multipage_pdf_bytes, sample_pdf_bytes, mock_ollama_response):
+        a = self._upload(client, multipage_pdf_bytes, "a.pdf")
+        b = self._upload(client, sample_pdf_bytes, "b.pdf")
+
+        r = client.post("/pdf/merge", json={"document_ids": [a, b]})
+
+        assert r.status_code == 200
+        assert r.json()["id"] not in (a, b)
+
+    def test_merge_download_only_returns_pdf(self, client, multipage_pdf_bytes, sample_pdf_bytes, mock_ollama_response):
+        a = self._upload(client, multipage_pdf_bytes, "a.pdf")
+        b = self._upload(client, sample_pdf_bytes, "b.pdf")
+
+        r = client.post("/pdf/merge", json={"document_ids": [a, b], "file": False})
+
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "application/pdf"
+        assert r.content[:4] == b"%PDF"
+
+    def test_merge_needs_two_ids(self, client, sample_pdf_bytes, mock_ollama_response):
+        a = self._upload(client, sample_pdf_bytes, "a.pdf")
+        r = client.post("/pdf/merge", json={"document_ids": [a]})
+        assert r.status_code == 422
+
+    def test_merge_unknown_id_is_404(self, client, sample_pdf_bytes, mock_ollama_response):
+        a = self._upload(client, sample_pdf_bytes, "a.pdf")
+        r = client.post("/pdf/merge", json={"document_ids": [a, 99999]})
+        assert r.status_code == 404
+
+    def test_merge_duplicate_output_is_409(self, client, multipage_pdf_bytes, sample_pdf_bytes, mock_ollama_response):
+        # Two distinct source documents so both uploads succeed; merging the same
+        # pair twice produces byte-identical output, which ingest_pdf dedups by hash.
+        a = self._upload(client, multipage_pdf_bytes, "a.pdf")
+        b = self._upload(client, sample_pdf_bytes, "b.pdf")
+        first = client.post("/pdf/merge", json={"document_ids": [a, b]})
+        assert first.status_code == 200
+        r = client.post("/pdf/merge", json={"document_ids": [a, b]})
+        assert r.status_code == 409

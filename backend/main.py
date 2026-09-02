@@ -38,7 +38,8 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pdf2image import convert_from_path
 from PIL import Image
-from pydantic import BaseModel
+from pydantic import BaseModel, conlist
+from starlette.background import BackgroundTask
 
 app = FastAPI()
 
@@ -170,6 +171,12 @@ try:
     from backend import storage
 except ModuleNotFoundError:
     import storage
+
+
+try:
+    from backend import pdf_ops
+except ModuleNotFoundError:
+    import pdf_ops
 
 
 init_db()
@@ -668,6 +675,60 @@ async def upload_pdf(file: UploadFile = File(...)):
             buffer.write(chunk)
 
     return ingest_pdf(file_path, safe_filename)
+
+
+def _load_doc_or_404(doc_id: int):
+    conn = get_db_connection()
+    row = conn.execute(
+        "SELECT * FROM documents WHERE id = ?", (doc_id,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(
+            status_code=404, detail=f"Document {doc_id} not found"
+        )
+    return row
+
+
+def _resolved_pdf_path(row) -> Path:
+    try:
+        path = storage.resolve(row["file_path"], UPLOAD_DIR)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid stored path")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+    return path
+
+
+class PdfMergeRequest(BaseModel):
+    document_ids: conlist(int, min_length=2)
+    file: bool = True
+
+
+@app.post("/pdf/merge")
+async def pdf_merge(request: PdfMergeRequest):
+    sources = [
+        _resolved_pdf_path(_load_doc_or_404(i)) for i in request.document_ids
+    ]
+
+    staging = storage.staging_dir(UPLOAD_DIR)
+    staging.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    merged = staging / f"{timestamp}_merged.pdf"
+    try:
+        pdf_ops.merge(sources, merged)
+    except Exception as exc:
+        merged.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=f"Could not merge: {exc}")
+
+    if not request.file:
+        return FileResponse(
+            merged,
+            media_type="application/pdf",
+            filename="merged.pdf",
+            background=BackgroundTask(merged.unlink, missing_ok=True),
+        )
+    return ingest_pdf(merged, "merged.pdf", source_label="pdf-merge")
 
 
 def generate_thumbnail(pdf_path: Path, stored_filename: str):

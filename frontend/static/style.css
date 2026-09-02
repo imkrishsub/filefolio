@@ -1283,14 +1283,21 @@ body.dark-mode .icon-btn .sun-icon {
 .tools-dropdown {
     position: absolute;
     right: 0;
-    top: 100%;
+    /* Open upward: the card has overflow:hidden and the actions bar is its
+       last row, so a downward menu would be clipped. There is always far more
+       room above the button (the 3:4 thumbnail alone is taller than the menu)
+       than below it, so an upward menu stays inside the card. */
+    bottom: 100%;
+    top: auto;
+    margin-bottom: 4px;
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-radius: 6px;
     box-shadow: var(--shadow-md);
-    z-index: 20;
+    z-index: 30;
     min-width: 160px;
-    overflow: hidden;
+    max-height: 240px;
+    overflow-y: auto;
 }
 
 .tools-dropdown button {
@@ -1327,6 +1334,10 @@ body.dark-mode .icon-btn .sun-icon {
     margin-top: 10px;
     font-size: 0.9em;
     color: var(--text-secondary);
+}
+
+.form-status--error {
+    color: var(--error-text);
 }
 
 /* Responsive adjustments */

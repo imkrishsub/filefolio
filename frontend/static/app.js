@@ -589,15 +589,15 @@ function createDocumentCard(doc) {
                     </svg>
                 </button>
                 <div class="tools-menu">
-                    <button class="btn-icon" onclick="event.stopPropagation(); toggleToolsMenu(${doc.id})" data-i18n-title="pdf.tools" title="Tools">
+                    <button class="btn-icon" onclick="event.stopPropagation(); toggleToolsMenu(${doc.id})" title="${t('pdf.tools')}">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="19" r="1"></circle></svg>
                     </button>
                     <div class="tools-dropdown" id="tools-dropdown-${doc.id}" hidden>
-                        <button onclick="event.stopPropagation(); openPdfTool('rotate', ${doc.id})" data-i18n="pdf.rotate">Rotate</button>
-                        <button onclick="event.stopPropagation(); openPdfTool('split', ${doc.id})" data-i18n="pdf.split">Split</button>
-                        <button onclick="event.stopPropagation(); openPdfTool('extract', ${doc.id})" data-i18n="pdf.extract">Extract pages</button>
-                        <button onclick="event.stopPropagation(); openPdfTool('delete_pages', ${doc.id})" data-i18n="pdf.delete_pages">Delete pages</button>
-                        <button onclick="event.stopPropagation(); openPdfTool('ocr', ${doc.id})" data-i18n="pdf.ocr">Make searchable</button>
+                        <button onclick="event.stopPropagation(); openPdfTool('rotate', ${doc.id})">${t('pdf.rotate')}</button>
+                        <button onclick="event.stopPropagation(); openPdfTool('split', ${doc.id})">${t('pdf.split')}</button>
+                        <button onclick="event.stopPropagation(); openPdfTool('extract', ${doc.id})">${t('pdf.extract')}</button>
+                        <button onclick="event.stopPropagation(); openPdfTool('delete_pages', ${doc.id})">${t('pdf.delete_pages')}</button>
+                        <button onclick="event.stopPropagation(); openPdfTool('ocr', ${doc.id})">${t('pdf.ocr')}</button>
                     </div>
                 </div>
                 <button class="btn-icon btn-delete" onclick="event.stopPropagation(); deleteDocument(${doc.id}, '${(doc.auto_filename || doc.original_filename).replace(/'/g, "\\'")}')" title="Delete document">
@@ -646,15 +646,15 @@ function createDocumentRow(doc) {
                     </svg>
                 </button>
                 <div class="tools-menu">
-                    <button class="btn-icon" onclick="event.stopPropagation(); toggleToolsMenu(${doc.id})" data-i18n-title="pdf.tools" title="Tools">
+                    <button class="btn-icon" onclick="event.stopPropagation(); toggleToolsMenu(${doc.id})" title="${t('pdf.tools')}">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="19" r="1"></circle></svg>
                     </button>
                     <div class="tools-dropdown" id="tools-dropdown-${doc.id}" hidden>
-                        <button onclick="event.stopPropagation(); openPdfTool('rotate', ${doc.id})" data-i18n="pdf.rotate">Rotate</button>
-                        <button onclick="event.stopPropagation(); openPdfTool('split', ${doc.id})" data-i18n="pdf.split">Split</button>
-                        <button onclick="event.stopPropagation(); openPdfTool('extract', ${doc.id})" data-i18n="pdf.extract">Extract pages</button>
-                        <button onclick="event.stopPropagation(); openPdfTool('delete_pages', ${doc.id})" data-i18n="pdf.delete_pages">Delete pages</button>
-                        <button onclick="event.stopPropagation(); openPdfTool('ocr', ${doc.id})" data-i18n="pdf.ocr">Make searchable</button>
+                        <button onclick="event.stopPropagation(); openPdfTool('rotate', ${doc.id})">${t('pdf.rotate')}</button>
+                        <button onclick="event.stopPropagation(); openPdfTool('split', ${doc.id})">${t('pdf.split')}</button>
+                        <button onclick="event.stopPropagation(); openPdfTool('extract', ${doc.id})">${t('pdf.extract')}</button>
+                        <button onclick="event.stopPropagation(); openPdfTool('delete_pages', ${doc.id})">${t('pdf.delete_pages')}</button>
+                        <button onclick="event.stopPropagation(); openPdfTool('ocr', ${doc.id})">${t('pdf.ocr')}</button>
                     </div>
                 </div>
                 <button class="btn-icon btn-delete" onclick="deleteDocument(${doc.id}, '${displayFilename.replace(/'/g, "\\'")}')" title="Delete document">
@@ -1503,6 +1503,7 @@ function openPdfTool(op, docId = null) {
     const status = document.getElementById('pdf-tool-status');
     status.hidden = true;
     status.textContent = '';
+    status.classList.remove('form-status--error');
     document.querySelectorAll('.tools-dropdown').forEach(d => d.hidden = true);
     document.getElementById('pdf-tool-modal').style.display = 'flex';
 }
@@ -1543,6 +1544,7 @@ if (pdfToolForm) {
         }
 
         status.hidden = false;
+        status.classList.remove('form-status--error');
         status.textContent = t('pdf.working');
         try {
             const resp = await fetch(url, {
@@ -1557,11 +1559,14 @@ if (pdfToolForm) {
             const ct = resp.headers.get('content-type') || '';
             if (ct.includes('application/pdf') || ct.includes('application/zip')) {
                 const blob = await resp.blob();
+                const objectUrl = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
+                a.href = objectUrl;
                 a.download = ct.includes('zip') ? 'split.zip' : `${op}.pdf`;
+                document.body.appendChild(a);
                 a.click();
-                URL.revokeObjectURL(a.href);
+                window.URL.revokeObjectURL(objectUrl);
+                a.remove();
             }
             status.textContent = t('pdf.done');
             selectedDocuments.clear();
@@ -1569,6 +1574,7 @@ if (pdfToolForm) {
             await loadDocuments();
             setTimeout(closePdfToolModal, 600);
         } catch (err) {
+            status.classList.add('form-status--error');
             status.textContent = err.message;
         }
     });

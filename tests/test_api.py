@@ -15,6 +15,8 @@ import pypdf
 import pytest
 from pypdf import PdfWriter
 
+from backend import storage
+
 
 class TestRootEndpoint:
     """Tests for the root endpoint."""
@@ -2397,3 +2399,57 @@ class TestPdfExtractAndDelete:
         doc = self._upload(client, multipage_pdf_bytes)
         r = client.post("/pdf/delete-pages", json={"document_id": doc, "pages": "1-5"})
         assert r.status_code == 400
+
+
+class TestPdfRotate:
+    def _upload(self, client, pdf_bytes, name="m.pdf"):
+        return client.post("/upload", files={"file": (name, io.BytesIO(pdf_bytes), "application/pdf")}).json()["id"]
+
+    def test_rotate_keeps_the_same_document_id(self, client, multipage_pdf_bytes, mock_ollama_response):
+        doc = self._upload(client, multipage_pdf_bytes)
+        r = client.post("/pdf/rotate", json={"document_id": doc, "degrees": 90})
+        assert r.status_code == 200
+        assert r.json()["id"] == doc
+
+    def test_rotate_changes_the_stored_file(self, client, multipage_pdf_bytes, mock_ollama_response, test_db):
+        import backend.main as main
+        doc = self._upload(client, multipage_pdf_bytes)
+        conn = main.get_db_connection()
+        before = conn.execute("SELECT file_hash FROM documents WHERE id=?", (doc,)).fetchone()[0]
+        conn.close()
+
+        client.post("/pdf/rotate", json={"document_id": doc, "degrees": 180})
+
+        conn = main.get_db_connection()
+        after = conn.execute("SELECT file_hash FROM documents WHERE id=?", (doc,)).fetchone()[0]
+        conn.close()
+        assert before != after
+
+    def test_rotate_bad_angle_is_422(self, client, multipage_pdf_bytes, mock_ollama_response):
+        doc = self._upload(client, multipage_pdf_bytes)
+        r = client.post("/pdf/rotate", json={"document_id": doc, "degrees": 45})
+        assert r.status_code == 422
+
+    def test_rotate_unknown_doc_is_404(self, client):
+        r = client.post("/pdf/rotate", json={"document_id": 4242, "degrees": 90})
+        assert r.status_code == 404
+
+    def test_rotate_rolls_back_when_db_update_fails(self, client, multipage_pdf_bytes, mock_ollama_response, monkeypatch, test_db):
+        import backend.main as main
+        doc = self._upload(client, multipage_pdf_bytes)
+        conn = main.get_db_connection()
+        original_hash = conn.execute("SELECT file_hash FROM documents WHERE id=?", (doc,)).fetchone()[0]
+        conn.close()
+
+        def boom(*a, **k):
+            raise sqlite3.OperationalError("disk full")
+        monkeypatch.setattr(main, "_persist_in_place_update", boom)
+
+        r = client.post("/pdf/rotate", json={"document_id": doc, "degrees": 90})
+        assert r.status_code == 500
+
+        conn = main.get_db_connection()
+        row = conn.execute("SELECT file_hash, file_path FROM documents WHERE id=?", (doc,)).fetchone()
+        conn.close()
+        assert row[0] == original_hash
+        assert storage.resolve(row[1], main.UPLOAD_DIR).is_file()

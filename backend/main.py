@@ -824,6 +824,112 @@ async def pdf_delete_pages(request: PdfPagesRequest):
     return _single_page_op(request, pdf_ops.delete_pages, "delete")
 
 
+def _extract_text_for_preview(pdf_path: Path) -> str:
+    """First 2000 chars of extractable text; OCR fallback like the upload pipeline."""
+    try:
+        reader = pypdf.PdfReader(pdf_path)
+        text = ""
+        for page in reader.pages[:20]:
+            text += (page.extract_text() or "") + " "
+        if len(text.strip()) < 50:
+            try:
+                for image in convert_from_path(pdf_path, dpi=300)[:20]:
+                    text += pytesseract.image_to_string(image, lang="eng+deu") + " "
+            except Exception as exc:
+                logger.warning("OCR fallback failed during in-place reindex: %s", exc)
+        return text[:2000]
+    except Exception as exc:
+        return f"Error extracting text: {exc}"
+
+
+def _persist_in_place_update(doc_id: int, file_hash: str, content_preview: str) -> None:
+    """UPDATE the row after an in-place file swap. Raises sqlite3.IntegrityError on a hash clash."""
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            "UPDATE documents SET file_hash = ?, content_preview = ? WHERE id = ?",
+            (file_hash, content_preview, doc_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _apply_in_place(row, transform) -> dict:
+    """Run transform(source, dest) -> None, swap the stored file for the result, reindex.
+
+    Holds the pre-swap file as a .bak until the DB update succeeds, so a DB failure
+    after the swap is fully rolled back (bytes + hash + preview all revert).
+    """
+    source = _resolved_pdf_path(row)
+    staging = storage.staging_dir(UPLOAD_DIR)
+    staging.mkdir(parents=True, exist_ok=True)
+    new_pdf = staging / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}_{source.name}"
+    try:
+        transform(source, new_pdf)
+    except ValueError as exc:
+        new_pdf.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        new_pdf.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Operation failed: {exc}")
+
+    new_hash = hashlib.sha256(new_pdf.read_bytes()).hexdigest()
+    new_preview = _extract_text_for_preview(new_pdf)
+
+    try:
+        backup = storage.replace_file(row["file_path"], UPLOAD_DIR, new_pdf, keep_backup=True)
+    except OSError as exc:
+        new_pdf.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Could not replace the file: {exc}")
+
+    current = storage.resolve(row["file_path"], UPLOAD_DIR)
+    try:
+        _persist_in_place_update(row["id"], new_hash, new_preview)
+    except sqlite3.IntegrityError:
+        os.replace(str(backup), str(current))
+        raise HTTPException(status_code=409, detail="Result duplicates another document")
+    except Exception as exc:
+        os.replace(str(backup), str(current))
+        raise HTTPException(status_code=500, detail=f"Could not update the document: {exc}")
+    Path(backup).unlink(missing_ok=True)
+
+    generate_thumbnail(current, row["stored_filename"])
+
+    conn = get_db_connection()
+    updated = conn.execute("SELECT * FROM documents WHERE id = ?", (row["id"],)).fetchone()
+    conn.close()
+    return {
+        "id": updated["id"],
+        "original_filename": updated["original_filename"],
+        "auto_filename": updated["auto_filename"],
+        "tags": json.loads(updated["tags"]) if updated["tags"] else [],
+        "category": updated["category"],
+        "preview": (updated["content_preview"] or "")[:200],
+    }
+
+
+class PdfRotateRequest(BaseModel):
+    document_id: int
+    degrees: Literal[90, 180, 270]
+    pages: str = "all"
+
+
+@app.post("/pdf/rotate")
+async def pdf_rotate(request: PdfRotateRequest):
+    row = _load_doc_or_404(request.document_id)
+
+    def transform(source: Path, dest: Path) -> None:
+        if request.pages.strip().lower() == "all":
+            targets = None
+        else:
+            groups = pdf_ops.parse_page_ranges(request.pages, pdf_ops.page_count(source))
+            targets = list(dict.fromkeys(n for g in groups for n in g))
+        pdf_ops.rotate(source, dest, request.degrees, targets)
+
+    return _apply_in_place(row, transform)
+
+
 def generate_thumbnail(pdf_path: Path, stored_filename: str):
     """
     Generate a thumbnail image from the first page of a PDF.

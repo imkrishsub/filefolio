@@ -276,6 +276,36 @@ function testDateFormatting() {
     console.log('✓ Date formatting tests passed');
 }
 
+// Test: PDF tool configuration
+function testPdfToolConfig() {
+    // Mirror of PDF_TOOL_CONFIG in app.js
+    const PDF_TOOL_CONFIG = {
+        merge:        { pages: false, degrees: false, download: true,  explainer: 'pdf.merge_explainer' },
+        split:        { pages: true,  degrees: false, download: true,  explainer: null },
+        extract:      { pages: true,  degrees: false, download: true,  explainer: null },
+        delete_pages: { pages: true,  degrees: false, download: true,  explainer: null },
+        rotate:       { pages: true,  degrees: true,  download: false, explainer: null },
+        ocr:          { pages: false, degrees: false, download: false, explainer: 'pdf.ocr_explainer' },
+    };
+
+    const ops = ['merge', 'split', 'extract', 'delete_pages', 'rotate', 'ocr'];
+    ops.forEach(op => {
+        console.assert(PDF_TOOL_CONFIG[op] !== undefined, `PDF_TOOL_CONFIG should include "${op}"`);
+    });
+    console.assert(Object.keys(PDF_TOOL_CONFIG).length === 6, 'PDF_TOOL_CONFIG should have exactly 6 ops');
+
+    console.assert(PDF_TOOL_CONFIG.merge.pages === false, 'merge should set pages: false');
+    console.assert(PDF_TOOL_CONFIG.ocr.pages === false, 'ocr should set pages: false');
+
+    ['split', 'extract', 'delete_pages'].forEach(op => {
+        console.assert(PDF_TOOL_CONFIG[op].pages === true, `${op} should set pages: true`);
+    });
+
+    console.assert(PDF_TOOL_CONFIG.rotate.degrees === true, 'rotate should set degrees: true');
+
+    console.log('✓ PDF tool config tests passed');
+}
+
 // Run all tests
 function runAllTests() {
     console.log('Running FileFolio frontend tests...\n');
@@ -290,6 +320,7 @@ function runAllTests() {
     testSelectionState();
     testFilenameEscaping();
     testDateFormatting();
+    testPdfToolConfig();
 
     console.log('\n✓ All frontend tests completed');
 }
@@ -307,6 +338,7 @@ if (typeof module !== 'undefined' && module.exports) {
         testSelectionState,
         testFilenameEscaping,
         testDateFormatting,
+        testPdfToolConfig,
         runAllTests
     };
 }

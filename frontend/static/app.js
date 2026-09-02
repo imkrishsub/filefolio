@@ -588,6 +588,18 @@ function createDocumentCard(doc) {
                         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                     </svg>
                 </button>
+                <div class="tools-menu">
+                    <button class="btn-icon" onclick="event.stopPropagation(); toggleToolsMenu(${doc.id})" data-i18n-title="pdf.tools" title="Tools">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="19" r="1"></circle></svg>
+                    </button>
+                    <div class="tools-dropdown" id="tools-dropdown-${doc.id}" hidden>
+                        <button onclick="event.stopPropagation(); openPdfTool('rotate', ${doc.id})" data-i18n="pdf.rotate">Rotate</button>
+                        <button onclick="event.stopPropagation(); openPdfTool('split', ${doc.id})" data-i18n="pdf.split">Split</button>
+                        <button onclick="event.stopPropagation(); openPdfTool('extract', ${doc.id})" data-i18n="pdf.extract">Extract pages</button>
+                        <button onclick="event.stopPropagation(); openPdfTool('delete_pages', ${doc.id})" data-i18n="pdf.delete_pages">Delete pages</button>
+                        <button onclick="event.stopPropagation(); openPdfTool('ocr', ${doc.id})" data-i18n="pdf.ocr">Make searchable</button>
+                    </div>
+                </div>
                 <button class="btn-icon btn-delete" onclick="event.stopPropagation(); deleteDocument(${doc.id}, '${(doc.auto_filename || doc.original_filename).replace(/'/g, "\\'")}')" title="Delete document">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="3 6 5 6 21 6"></polyline>
@@ -633,6 +645,18 @@ function createDocumentRow(doc) {
                         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                     </svg>
                 </button>
+                <div class="tools-menu">
+                    <button class="btn-icon" onclick="event.stopPropagation(); toggleToolsMenu(${doc.id})" data-i18n-title="pdf.tools" title="Tools">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="19" r="1"></circle></svg>
+                    </button>
+                    <div class="tools-dropdown" id="tools-dropdown-${doc.id}" hidden>
+                        <button onclick="event.stopPropagation(); openPdfTool('rotate', ${doc.id})" data-i18n="pdf.rotate">Rotate</button>
+                        <button onclick="event.stopPropagation(); openPdfTool('split', ${doc.id})" data-i18n="pdf.split">Split</button>
+                        <button onclick="event.stopPropagation(); openPdfTool('extract', ${doc.id})" data-i18n="pdf.extract">Extract pages</button>
+                        <button onclick="event.stopPropagation(); openPdfTool('delete_pages', ${doc.id})" data-i18n="pdf.delete_pages">Delete pages</button>
+                        <button onclick="event.stopPropagation(); openPdfTool('ocr', ${doc.id})" data-i18n="pdf.ocr">Make searchable</button>
+                    </div>
+                </div>
                 <button class="btn-icon btn-delete" onclick="deleteDocument(${doc.id}, '${displayFilename.replace(/'/g, "\\'")}')" title="Delete document">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="3 6 5 6 21 6"></polyline>
@@ -899,11 +923,14 @@ async function deleteDocument(id, filename) {
 window.onclick = function(event) {
     const editModal = document.getElementById('edit-modal');
     const previewModal = document.getElementById('preview-modal');
+    const pdfToolModal = document.getElementById('pdf-tool-modal');
 
     if (event.target === editModal) {
         closeEditModal();
     } else if (event.target === previewModal) {
         closePreviewModal();
+    } else if (event.target === pdfToolModal) {
+        closePdfToolModal();
     }
 }
 
@@ -962,6 +989,7 @@ function toggleDocumentSelection(docId) {
 function updateSelectionUI() {
     const downloadBtn = document.getElementById('download-selected-btn');
     const downloadBtnText = document.getElementById('download-btn-text');
+    const mergeBtn = document.getElementById('merge-selected-btn');
     const selectAllCheckbox = document.getElementById('select-all-checkbox');
 
     // Show/hide download button
@@ -970,6 +998,11 @@ function updateSelectionUI() {
         downloadBtnText.textContent = t('button.download_count', { count: selectedDocuments.size });
     } else {
         downloadBtn.style.display = 'none';
+    }
+
+    // Show/hide merge button (needs at least two selected documents)
+    if (mergeBtn) {
+        mergeBtn.style.display = selectedDocuments.size >= 2 ? 'flex' : 'none';
     }
 
     // Update select all checkbox
@@ -1418,6 +1451,125 @@ if (restoreFileInput) {
             restoreBackup(e.target.files[0]);
             // Reset input so same file can be selected again
             e.target.value = '';
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// PDF workbench: per-document Tools menu, merge action, and operation modal
+// ---------------------------------------------------------------------------
+
+let pdfToolState = { op: null, docId: null };
+
+function toggleToolsMenu(docId) {
+    document.querySelectorAll('.tools-dropdown').forEach(d => {
+        if (d.id !== `tools-dropdown-${docId}`) d.hidden = true;
+    });
+    const el = document.getElementById(`tools-dropdown-${docId}`);
+    if (el) el.hidden = !el.hidden;
+}
+
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.tools-menu')) {
+        document.querySelectorAll('.tools-dropdown').forEach(d => d.hidden = true);
+    }
+});
+
+const PDF_TOOL_CONFIG = {
+    merge:        { pages: false, degrees: false, download: true,  explainer: 'pdf.merge_explainer' },
+    split:        { pages: true,  degrees: false, download: true,  explainer: null },
+    extract:      { pages: true,  degrees: false, download: true,  explainer: null },
+    delete_pages: { pages: true,  degrees: false, download: true,  explainer: null },
+    rotate:       { pages: true,  degrees: true,  download: false, explainer: null },
+    ocr:          { pages: false, degrees: false, download: false, explainer: 'pdf.ocr_explainer' },
+};
+
+function openPdfTool(op, docId = null) {
+    if (op === 'merge' && selectedDocuments.size < 2) {
+        showStatus(t('pdf.failed'), 'error');
+        return;
+    }
+    pdfToolState = { op, docId };
+    const cfg = PDF_TOOL_CONFIG[op];
+    document.getElementById('pdf-tool-title').textContent = t(`pdf.modal_title_${op}`);
+    const explainer = document.getElementById('pdf-tool-explainer');
+    explainer.hidden = !cfg.explainer;
+    if (cfg.explainer) explainer.textContent = t(cfg.explainer);
+    document.getElementById('pdf-tool-pages-group').hidden = !cfg.pages;
+    document.getElementById('pdf-tool-degrees-group').hidden = !cfg.degrees;
+    document.getElementById('pdf-tool-download-group').hidden = !cfg.download;
+    document.getElementById('pdf-tool-pages').value = op === 'rotate' ? 'all' : '';
+    document.getElementById('pdf-tool-download').checked = false;
+    const status = document.getElementById('pdf-tool-status');
+    status.hidden = true;
+    status.textContent = '';
+    document.querySelectorAll('.tools-dropdown').forEach(d => d.hidden = true);
+    document.getElementById('pdf-tool-modal').style.display = 'flex';
+}
+
+function closePdfToolModal() {
+    document.getElementById('pdf-tool-modal').style.display = 'none';
+}
+
+const pdfToolForm = document.getElementById('pdf-tool-form');
+if (pdfToolForm) {
+    pdfToolForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const { op, docId } = pdfToolState;
+        const cfg = PDF_TOOL_CONFIG[op];
+        const status = document.getElementById('pdf-tool-status');
+        const pages = document.getElementById('pdf-tool-pages').value.trim();
+        const downloadOnly = cfg.download && document.getElementById('pdf-tool-download').checked;
+
+        let url, body;
+        if (op === 'merge') {
+            url = '/pdf/merge';
+            body = { document_ids: Array.from(selectedDocuments), file: !downloadOnly };
+        } else if (op === 'rotate') {
+            url = '/pdf/rotate';
+            body = {
+                document_id: docId,
+                degrees: parseInt(document.getElementById('pdf-tool-degrees').value, 10),
+                pages: pages || 'all',
+            };
+        } else if (op === 'ocr') {
+            url = '/pdf/ocr';
+            body = { document_id: docId };
+        } else {
+            url = op === 'split' ? '/pdf/split' : (op === 'extract' ? '/pdf/extract' : '/pdf/delete-pages');
+            body = op === 'split'
+                ? { document_id: docId, ranges: pages, file: !downloadOnly }
+                : { document_id: docId, pages, file: !downloadOnly };
+        }
+
+        status.hidden = false;
+        status.textContent = t('pdf.working');
+        try {
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            if (!resp.ok) {
+                const detail = await resp.json().catch(() => ({}));
+                throw new Error(detail.detail || t('pdf.failed'));
+            }
+            const ct = resp.headers.get('content-type') || '';
+            if (ct.includes('application/pdf') || ct.includes('application/zip')) {
+                const blob = await resp.blob();
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = ct.includes('zip') ? 'split.zip' : `${op}.pdf`;
+                a.click();
+                URL.revokeObjectURL(a.href);
+            }
+            status.textContent = t('pdf.done');
+            selectedDocuments.clear();
+            updateSelectionUI();
+            await loadDocuments();
+            setTimeout(closePdfToolModal, 600);
+        } catch (err) {
+            status.textContent = err.message;
         }
     });
 }

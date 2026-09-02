@@ -123,6 +123,67 @@ def _cmd_update(args) -> None:
     print(f"tags:     {_format_tags(doc.get('tags'))}")
 
 
+def _print_doc_line(doc) -> None:
+    print(
+        f"Filed as id {doc.get('id')}: {doc.get('category') or '-'} | "
+        f"{_format_tags(doc.get('tags'))}"
+    )
+
+
+def _cmd_pdf_merge(args) -> None:
+    result = asyncio.run(client.pdf_merge(args.doc_ids, download_to=args.download))
+    if args.json:
+        _print_json(result)
+        return
+    if args.download:
+        print(f"Saved to {result}")
+    else:
+        _print_doc_line(result)
+
+
+def _cmd_pdf_split(args) -> None:
+    result = asyncio.run(
+        client.pdf_split(args.doc_id, args.ranges, download_dir=args.download_dir)
+    )
+    if args.json:
+        _print_json(result)
+        return
+    if args.download_dir:
+        for path in result:
+            print(f"Saved {path}")
+    else:
+        for doc in result:
+            _print_doc_line(doc)
+
+
+def _cmd_pdf_extract(args) -> None:
+    _run_single_page_cmd(client.pdf_extract, args)
+
+
+def _cmd_pdf_delete_pages(args) -> None:
+    _run_single_page_cmd(client.pdf_delete_pages, args)
+
+
+def _run_single_page_cmd(fn, args) -> None:
+    result = asyncio.run(fn(args.doc_id, args.pages, download_to=args.download))
+    if args.json:
+        _print_json(result)
+        return
+    print(f"Saved to {result}") if args.download else _print_doc_line(result)
+
+
+def _cmd_pdf_rotate(args) -> None:
+    result = asyncio.run(client.pdf_rotate(args.doc_id, args.degrees, args.pages))
+    _print_json(result) if args.json else print(f"Rotated document {result.get('id')}")
+
+
+def _cmd_pdf_ocr(args) -> None:
+    result = asyncio.run(client.pdf_ocr(args.doc_id))
+    _print_json(result) if args.json else print(
+        f"OCR added to document {result.get('id')}"
+    )
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="filefolio",
@@ -170,6 +231,51 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_json_flag(update)
     update.set_defaults(func=_cmd_update)
 
+    pdf = sub.add_parser("pdf", help="merge, split, rotate, and OCR stored PDFs")
+    pdf_sub = pdf.add_subparsers(dest="pdf_command")
+
+    p_merge = pdf_sub.add_parser("merge", help="merge documents into one")
+    p_merge.add_argument("doc_ids", nargs="+", type=int, metavar="ID")
+    p_merge.add_argument("--download", metavar="OUT.pdf", help="save instead of filing")
+    _add_json_flag(p_merge)
+    p_merge.set_defaults(func=_cmd_pdf_merge)
+
+    p_split = pdf_sub.add_parser("split", help="split one document by page ranges")
+    p_split.add_argument("doc_id", type=int, metavar="ID")
+    p_split.add_argument("ranges", help='e.g. "1-3,5,8-"')
+    p_split.add_argument(
+        "--download-dir", metavar="DIR", help="save parts instead of filing"
+    )
+    _add_json_flag(p_split)
+    p_split.set_defaults(func=_cmd_pdf_split)
+
+    for name, help_text in [
+        ("extract", "keep only these pages"),
+        ("delete-pages", "remove these pages"),
+    ]:
+        p = pdf_sub.add_parser(name, help=help_text)
+        p.add_argument("doc_id", type=int, metavar="ID")
+        p.add_argument("pages", help='e.g. "2-4"')
+        p.add_argument(
+            "--download", metavar="OUT.pdf", help="save instead of filing"
+        )
+        _add_json_flag(p)
+        p.set_defaults(
+            func=_cmd_pdf_extract if name == "extract" else _cmd_pdf_delete_pages
+        )
+
+    p_rot = pdf_sub.add_parser("rotate", help="rotate pages in place")
+    p_rot.add_argument("doc_id", type=int, metavar="ID")
+    p_rot.add_argument("--degrees", type=int, choices=[90, 180, 270], required=True)
+    p_rot.add_argument("--pages", default="all", help='"all" or e.g. "1,3"')
+    _add_json_flag(p_rot)
+    p_rot.set_defaults(func=_cmd_pdf_rotate)
+
+    p_ocr = pdf_sub.add_parser("ocr", help="add a searchable text layer in place")
+    p_ocr.add_argument("doc_id", type=int, metavar="ID")
+    _add_json_flag(p_ocr)
+    p_ocr.set_defaults(func=_cmd_pdf_ocr)
+
     return parser
 
 
@@ -180,6 +286,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     if not getattr(args, "command", None):
         parser.print_help()
         return 2
+
+    if args.command == "pdf" and not getattr(args, "pdf_command", None):
+        parser.error(
+            "pdf needs a subcommand: merge, split, extract, delete-pages, rotate, ocr"
+        )
 
     try:
         args.func(args)

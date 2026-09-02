@@ -188,6 +188,36 @@ class TestUpdateCommand:
         }
 
 
+class TestPdfCommands:
+    def test_merge_calls_client_and_prints_new_id(self, monkeypatch, capsys):
+        seen = _stub(monkeypatch, "pdf_merge", result={"id": 12, "category": "Report", "tags": []})
+        code = cli.main(["pdf", "merge", "3", "4", "5"])
+        assert code == 0
+        assert seen["args"][0] == [3, 4, 5]
+        assert "12" in capsys.readouterr().out
+
+    def test_merge_download_passes_path(self, monkeypatch, capsys, tmp_path):
+        out = str(tmp_path / "m.pdf")
+        seen = _stub(monkeypatch, "pdf_merge", result=out)
+        cli.main(["pdf", "merge", "3", "4", "--download", out])
+        assert seen["kwargs"]["download_to"] == out
+
+    def test_split_passes_ranges(self, monkeypatch, capsys):
+        seen = _stub(monkeypatch, "pdf_split", result=[{"id": 1}, {"id": 2}])
+        cli.main(["pdf", "split", "7", "1-2,3-5"])
+        assert seen["args"] == (7, "1-2,3-5")
+
+    def test_rotate_requires_degrees(self, capsys):
+        with pytest.raises(SystemExit):
+            cli.main(["pdf", "rotate", "7"])
+
+    def test_ocr_error_exits_1(self, monkeypatch, capsys):
+        _stub(monkeypatch, "pdf_ocr", error=RuntimeError("ocrmypdf not installed"))
+        code = cli.main(["pdf", "ocr", "7"])
+        assert code == 1
+        assert "ocrmypdf" in capsys.readouterr().err
+
+
 class TestErrorHandling:
     def test_client_error_exits_1_and_writes_to_stderr(self, monkeypatch, capsys):
         _stub(

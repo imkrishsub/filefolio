@@ -775,6 +775,55 @@ async def pdf_split(request: PdfSplitRequest):
         shutil.rmtree(work, ignore_errors=True)
 
 
+class PdfPagesRequest(BaseModel):
+    document_id: int
+    pages: str
+    file: bool = True
+
+
+def _single_page_op(request: PdfPagesRequest, op, verb: str):
+    source = _resolved_pdf_path(_load_doc_or_404(request.document_id))
+    try:
+        groups = pdf_ops.parse_page_ranges(request.pages, pdf_ops.page_count(source))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    pages = [n for group in groups for n in group]
+
+    staging = storage.staging_dir(UPLOAD_DIR)
+    staging.mkdir(parents=True, exist_ok=True)
+    out = staging / (
+        f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_"
+        f"{uuid.uuid4().hex[:8]}_{verb}_{source.stem}.pdf"
+    )
+    try:
+        op(source, pages, out)
+    except ValueError as exc:
+        out.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        out.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=f"Could not {verb}: {exc}")
+
+    if not request.file:
+        return FileResponse(
+            out,
+            media_type="application/pdf",
+            filename=f"{verb}.pdf",
+            background=BackgroundTask(out.unlink, missing_ok=True),
+        )
+    return ingest_pdf(out, f"{verb}_{source.name}", source_label=f"pdf-{verb}")
+
+
+@app.post("/pdf/extract")
+async def pdf_extract(request: PdfPagesRequest):
+    return _single_page_op(request, pdf_ops.extract_pages, "extract")
+
+
+@app.post("/pdf/delete-pages")
+async def pdf_delete_pages(request: PdfPagesRequest):
+    return _single_page_op(request, pdf_ops.delete_pages, "delete")
+
+
 def generate_thumbnail(pdf_path: Path, stored_filename: str):
     """
     Generate a thumbnail image from the first page of a PDF.

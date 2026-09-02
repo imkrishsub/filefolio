@@ -2371,3 +2371,29 @@ class TestPdfSplit:
     def test_split_unknown_doc_is_404(self, client):
         r = client.post("/pdf/split", json={"document_id": 55555, "ranges": "1"})
         assert r.status_code == 404
+
+
+class TestPdfExtractAndDelete:
+    def _upload(self, client, pdf_bytes, name="m.pdf"):
+        return client.post("/upload", files={"file": (name, io.BytesIO(pdf_bytes), "application/pdf")}).json()["id"]
+
+    def test_extract_files_a_document_with_only_those_pages(self, client, multipage_pdf_bytes, mock_ollama_response):
+        doc = self._upload(client, multipage_pdf_bytes)
+        r = client.post("/pdf/extract", json={"document_id": doc, "pages": "2-3"})
+        assert r.status_code == 200
+        assert r.json()["id"] != doc
+
+    def test_extract_download_only(self, client, multipage_pdf_bytes, mock_ollama_response):
+        doc = self._upload(client, multipage_pdf_bytes)
+        r = client.post("/pdf/extract", json={"document_id": doc, "pages": "1", "file": False})
+        assert r.status_code == 200 and r.content[:4] == b"%PDF"
+
+    def test_delete_pages_files_a_document(self, client, multipage_pdf_bytes, mock_ollama_response):
+        doc = self._upload(client, multipage_pdf_bytes)
+        r = client.post("/pdf/delete-pages", json={"document_id": doc, "pages": "1,5"})
+        assert r.status_code == 200
+
+    def test_delete_all_pages_is_400(self, client, multipage_pdf_bytes, mock_ollama_response):
+        doc = self._upload(client, multipage_pdf_bytes)
+        r = client.post("/pdf/delete-pages", json={"document_id": doc, "pages": "1-5"})
+        assert r.status_code == 400

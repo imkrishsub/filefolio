@@ -61,15 +61,6 @@ def _one_based(value: str, page_count: int) -> int:
     return page
 
 
-def _flatten(groups: list[list[int]]) -> list[int]:
-    seen: list[int] = []
-    for group in groups:
-        for page in group:
-            if page not in seen:
-                seen.append(page)
-    return seen
-
-
 def merge(sources: list[Path], dest: Path) -> None:
     if len(sources) < 2:
         raise ValueError("merge needs at least two documents")

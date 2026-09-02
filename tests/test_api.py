@@ -2453,3 +2453,31 @@ class TestPdfRotate:
         conn.close()
         assert row[0] == original_hash
         assert storage.resolve(row[1], main.UPLOAD_DIR).is_file()
+
+
+class TestPdfOcr:
+    def _upload(self, client, pdf_bytes, name="m.pdf"):
+        return client.post("/upload", files={"file": (name, io.BytesIO(pdf_bytes), "application/pdf")}).json()["id"]
+
+    def test_ocr_unknown_doc_is_404(self, client):
+        r = client.post("/pdf/ocr", json={"document_id": 8888})
+        assert r.status_code == 404
+
+    def test_ocr_reports_missing_binary_as_500(self, client, multipage_pdf_bytes, mock_ollama_response, monkeypatch):
+        import backend.pdf_ops as pdf_ops
+        doc = self._upload(client, multipage_pdf_bytes)
+
+        def missing(source, dest):
+            raise RuntimeError("ocrmypdf is not installed. Install it (and ghostscript) to use OCR.")
+        monkeypatch.setattr(pdf_ops, "ocr", missing)
+
+        r = client.post("/pdf/ocr", json={"document_id": doc})
+        assert r.status_code == 500
+        assert "ocrmypdf" in r.json()["detail"]
+
+    @pytest.mark.slow
+    @pytest.mark.skipif(shutil.which("ocrmypdf") is None, reason="ocrmypdf not installed")
+    def test_ocr_keeps_the_same_document_id(self, client, multipage_pdf_bytes, mock_ollama_response):
+        doc = self._upload(client, multipage_pdf_bytes)
+        r = client.post("/pdf/ocr", json={"document_id": doc})
+        assert r.status_code == 200 and r.json()["id"] == doc

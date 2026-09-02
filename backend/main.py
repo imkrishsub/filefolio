@@ -930,6 +930,20 @@ async def pdf_rotate(request: PdfRotateRequest):
     return _apply_in_place(row, transform)
 
 
+class PdfOcrRequest(BaseModel):
+    document_id: int
+
+
+@app.post("/pdf/ocr")
+async def pdf_ocr(request: PdfOcrRequest):
+    row = _load_doc_or_404(request.document_id)
+
+    def transform(source: Path, dest: Path) -> None:
+        pdf_ops.ocr(source, dest)
+
+    return _apply_in_place(row, transform)
+
+
 def generate_thumbnail(pdf_path: Path, stored_filename: str):
     """
     Generate a thumbnail image from the first page of a PDF.

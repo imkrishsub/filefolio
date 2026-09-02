@@ -623,16 +623,12 @@ def ingest_pdf(
 @app.post("/upload")
 async def upload_pdf(file: UploadFile = File(...)):
     """
-    Upload and process a PDF document.
+    Upload a PDF document.
 
-    This endpoint handles the complete document ingestion pipeline:
-    1. Validates the file is a PDF
-    2. Saves with timestamped filename and calculates SHA-256 hash
-    3. Checks for duplicates using the hash
-    4. Extracts text using PyPDF, falls back to OCR for scanned documents
-    5. Generates thumbnail from first page
-    6. Uses local LLM to suggest category and tags
-    7. Stores metadata in SQLite with full-text search index
+    Sanitises the browser-supplied filename, streams the upload to the staging
+    directory while enforcing the size limit and the %PDF magic bytes, then
+    delegates the ingestion pipeline (hashing, dedup, text/OCR, thumbnail, LLM
+    tagging, indexing) to ingest_pdf().
 
     Returns: Document metadata including suggested tags and category
     """
@@ -740,10 +736,15 @@ class PdfSplitRequest(BaseModel):
 
 @app.post("/pdf/split")
 async def pdf_split(request: PdfSplitRequest):
+    """Split a stored PDF into parts by page range.
+
+    If one part fails to file (e.g. it duplicates an existing document), earlier
+    parts remain filed; the response is the error for the failing part.
+    """
     source = _resolved_pdf_path(_load_doc_or_404(request.document_id))
     try:
         groups = pdf_ops.parse_page_ranges(request.ranges, pdf_ops.page_count(source))
-    except ValueError as exc:
+    except (ValueError, pypdf.errors.PyPdfError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
     staging = storage.staging_dir(UPLOAD_DIR)
@@ -785,9 +786,9 @@ def _single_page_op(request: PdfPagesRequest, op, verb: str):
     source = _resolved_pdf_path(_load_doc_or_404(request.document_id))
     try:
         groups = pdf_ops.parse_page_ranges(request.pages, pdf_ops.page_count(source))
-    except ValueError as exc:
+    except (ValueError, pypdf.errors.PyPdfError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    pages = [n for group in groups for n in group]
+    pages = list(dict.fromkeys(n for group in groups for n in group))
 
     staging = storage.staging_dir(UPLOAD_DIR)
     staging.mkdir(parents=True, exist_ok=True)
@@ -867,7 +868,7 @@ def _apply_in_place(row, transform) -> dict:
     new_pdf = staging / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}_{source.name}"
     try:
         transform(source, new_pdf)
-    except ValueError as exc:
+    except (ValueError, pypdf.errors.PyPdfError) as exc:
         new_pdf.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:

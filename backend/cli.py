@@ -150,7 +150,7 @@ def _cmd_pdf_split(args) -> None:
         return
     if args.download_dir:
         for path in result:
-            print(f"Saved {path}")
+            print(f"Saved to {path}")
     else:
         for doc in result:
             _print_doc_line(doc)
@@ -266,7 +266,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_rot = pdf_sub.add_parser("rotate", help="rotate pages in place")
     p_rot.add_argument("doc_id", type=int, metavar="ID")
-    p_rot.add_argument("--degrees", type=int, choices=[90, 180, 270], required=True)
+    p_rot.add_argument(
+        "--degrees",
+        type=int,
+        choices=[90, 180, 270],
+        required=True,
+        help="rotation in degrees",
+    )
     p_rot.add_argument("--pages", default="all", help='"all" or e.g. "1,3"')
     _add_json_flag(p_rot)
     p_rot.set_defaults(func=_cmd_pdf_rotate)

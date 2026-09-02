@@ -116,6 +116,15 @@ class TestToolDelegation:
         """A new client function should not be silently missing from MCP."""
         for name in ("search", "get_document", "download", "upload", "update"):
             assert hasattr(mcp_server, f"filefolio_{name}")
+        for name in (
+            "pdf_merge",
+            "pdf_split",
+            "pdf_extract",
+            "pdf_delete_pages",
+            "pdf_rotate",
+            "pdf_ocr",
+        ):
+            assert hasattr(mcp_server, f"filefolio_{name}")
 
 
 class TestPdfToolDelegation:

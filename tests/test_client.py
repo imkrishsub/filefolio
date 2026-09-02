@@ -457,6 +457,34 @@ class TestPdfOperations:
         with pytest.raises(ValueError):
             client.parse_page_ranges("abc")
 
+    @pytest.mark.asyncio
+    async def test_split_bad_range_raises_without_calling_api(self, monkeypatch):
+        async def handler(request):
+            raise AssertionError("no HTTP request should be made")
+        monkeypatch.setattr(client, "_make_client", _client_with_handler(handler))
+        with pytest.raises(RuntimeError, match="Invalid page range"):
+            await client.pdf_split(1, "not-a-range")
+
+    @pytest.mark.asyncio
+    async def test_extract_bad_range_raises_without_calling_api(self, monkeypatch):
+        async def handler(request):
+            raise AssertionError("no HTTP request should be made")
+        monkeypatch.setattr(client, "_make_client", _client_with_handler(handler))
+        with pytest.raises(RuntimeError, match="Invalid page range"):
+            await client.pdf_extract(1, "abc")
+
+    def test_client_and_pdf_ops_page_range_parsers_agree(self):
+        from backend import pdf_ops
+
+        for spec in ["1", "2-4", "1-2,4", "3-"]:
+            for n in [5, 10]:
+                assert client.parse_page_ranges(spec, n) == pdf_ops.parse_page_ranges(spec, n)
+        for bad in ["", "0", "abc", "3-1"]:
+            with pytest.raises(ValueError):
+                client.parse_page_ranges(bad, 5)
+            with pytest.raises(ValueError):
+                pdf_ops.parse_page_ranges(bad, 5)
+
 
 class TestValidCategories:
     def test_categories_match_the_storage_layer(self):

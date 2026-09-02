@@ -278,15 +278,14 @@ function testDateFormatting() {
 
 // Test: PDF tool configuration
 function testPdfToolConfig() {
-    // Mirror of PDF_TOOL_CONFIG in app.js
-    const PDF_TOOL_CONFIG = {
-        merge:        { pages: false, degrees: false, download: true,  explainer: 'pdf.merge_explainer' },
-        split:        { pages: true,  degrees: false, download: true,  explainer: null },
-        extract:      { pages: true,  degrees: false, download: true,  explainer: null },
-        delete_pages: { pages: true,  degrees: false, download: true,  explainer: null },
-        rotate:       { pages: true,  degrees: true,  download: false, explainer: null },
-        ocr:          { pages: false, degrees: false, download: false, explainer: 'pdf.ocr_explainer' },
-    };
+    // Read the real PDF_TOOL_CONFIG object literal out of app.js so this test
+    // fails if that config changes shape.
+    const src = require('fs').readFileSync(
+        __dirname + '/../frontend/static/app.js', 'utf8'
+    );
+    const match = src.match(/const PDF_TOOL_CONFIG\s*=\s*(\{[\s\S]*?\n\});/);
+    console.assert(match !== null, 'app.js should define a PDF_TOOL_CONFIG object literal');
+    const PDF_TOOL_CONFIG = new Function('return ' + match[1])();
 
     const ops = ['merge', 'split', 'extract', 'delete_pages', 'rotate', 'ocr'];
     ops.forEach(op => {

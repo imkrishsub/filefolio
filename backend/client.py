@@ -314,6 +314,10 @@ async def pdf_split(doc_id, ranges, *, download_dir=None):
     payload = {"document_id": doc_id, "ranges": ranges, "file": download_dir is None}
     if download_dir is not None and not Path(download_dir).is_dir():
         raise RuntimeError(f"Destination directory does not exist: {download_dir}")
+    try:
+        parse_page_ranges(ranges)
+    except ValueError as exc:
+        raise RuntimeError(f"Invalid page range: {exc}")
     async with _make_client(timeout=300.0) as http:
         try:
             resp = await http.post("/pdf/split", json=payload)
@@ -346,6 +350,10 @@ async def pdf_extract(doc_id, pages, *, download_to=None):
         raise RuntimeError(
             f"Destination directory does not exist: {Path(download_to).parent}"
         )
+    try:
+        parse_page_ranges(pages)
+    except ValueError as exc:
+        raise RuntimeError(f"Invalid page range: {exc}")
     async with _make_client(timeout=120.0) as http:
         try:
             resp = await http.post("/pdf/extract", json=payload)
@@ -370,6 +378,10 @@ async def pdf_delete_pages(doc_id, pages, *, download_to=None):
         raise RuntimeError(
             f"Destination directory does not exist: {Path(download_to).parent}"
         )
+    try:
+        parse_page_ranges(pages)
+    except ValueError as exc:
+        raise RuntimeError(f"Invalid page range: {exc}")
     async with _make_client(timeout=120.0) as http:
         try:
             resp = await http.post("/pdf/delete-pages", json=payload)

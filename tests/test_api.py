@@ -2374,6 +2374,21 @@ class TestPdfSplit:
         r = client.post("/pdf/split", json={"document_id": 55555, "ranges": "1"})
         assert r.status_code == 404
 
+    def test_split_corrupt_stored_file_is_400(
+        self, client, multipage_pdf_bytes, mock_ollama_response, test_db
+    ):
+        import backend.main as main
+        doc = self._upload(client, multipage_pdf_bytes)
+        conn = main.get_db_connection()
+        file_path = conn.execute(
+            "SELECT file_path FROM documents WHERE id=?", (doc,)
+        ).fetchone()[0]
+        conn.close()
+        storage.resolve(file_path, main.UPLOAD_DIR).write_bytes(b"not a pdf")
+
+        r = client.post("/pdf/split", json={"document_id": doc, "ranges": "1-2"})
+        assert r.status_code == 400
+
 
 class TestPdfExtractAndDelete:
     def _upload(self, client, pdf_bytes, name="m.pdf"):
@@ -2433,6 +2448,21 @@ class TestPdfRotate:
     def test_rotate_unknown_doc_is_404(self, client):
         r = client.post("/pdf/rotate", json={"document_id": 4242, "degrees": 90})
         assert r.status_code == 404
+
+    def test_rotate_corrupt_stored_file_is_400(
+        self, client, multipage_pdf_bytes, mock_ollama_response, test_db
+    ):
+        import backend.main as main
+        doc = self._upload(client, multipage_pdf_bytes)
+        conn = main.get_db_connection()
+        file_path = conn.execute(
+            "SELECT file_path FROM documents WHERE id=?", (doc,)
+        ).fetchone()[0]
+        conn.close()
+        storage.resolve(file_path, main.UPLOAD_DIR).write_bytes(b"not a pdf")
+
+        r = client.post("/pdf/rotate", json={"document_id": doc, "degrees": 90, "pages": "1"})
+        assert r.status_code == 400
 
     def test_rotate_rolls_back_when_db_update_fails(self, client, multipage_pdf_bytes, mock_ollama_response, monkeypatch, test_db):
         import backend.main as main

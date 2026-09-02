@@ -282,12 +282,16 @@ or `--download-dir DIR` (split) to save the result instead of filing it, and
 - `filefolio_pdf_rotate` — rotate pages 90, 180, or 270 degrees in place.
 - `filefolio_pdf_ocr` — add a searchable text layer in place.
 
-### Behaviour
+### Behavior
 
 Merge, split, extract, and delete-pages create new documents that are filed
 through the same AI tagging pipeline as uploads (or, with the download option,
 just hand you the file). Rotate and Make searchable (OCR) edit the document in
 place, keeping its id, tags, category, and upload date.
+
+Split files its parts one at a time. If a later part fails to file (for example
+because it duplicates an existing document), the earlier parts stay filed and the
+response is the error for the failing part.
 
 ### OCR dependencies
 

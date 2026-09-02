@@ -226,6 +226,46 @@ def restore_to(current_path: str, upload_dir: Path, original_file_path: str) -> 
     _move_into_place(current, destination)
 
 
+def replace_file(
+    current_relpath: str,
+    upload_dir: Path,
+    new_pdf: Path,
+    *,
+    keep_backup: bool = False,
+) -> Path | None:
+    """Swap the file a document row points at with ``new_pdf``, keeping the name.
+
+    Sidesteps the live file to ``<name>.bak`` first so a failure can put it back.
+    On success: if ``keep_backup``, returns the backup ``Path`` (the caller must
+    delete or restore it); otherwise the backup is removed and ``None`` returned.
+    ``new_pdf`` no longer exists after success. On failure the original is
+    restored in place and the exception propagates.
+
+    ``new_pdf`` must sit on the same filesystem as ``upload_dir`` (callers stage
+    it inside ``upload_dir``) so the rename cannot raise ``EXDEV``.
+
+    Raises:
+        ValueError: if ``current_relpath`` escapes ``upload_dir`` or has no file.
+        OSError: on a filesystem failure moving ``new_pdf`` into place.
+    """
+    upload_dir = Path(upload_dir)
+    current = resolve(current_relpath, upload_dir)
+    if not current.is_file():
+        raise ValueError(f"no file to replace at {current_relpath!r}")
+
+    backup = current.with_name(current.name + ".bak")
+    os.replace(str(current), str(backup))
+    try:
+        os.replace(str(new_pdf), str(current))
+    except OSError:
+        os.replace(str(backup), str(current))
+        raise
+    if keep_backup:
+        return backup
+    backup.unlink(missing_ok=True)
+    return None
+
+
 def _has_content(path: Path) -> bool:
     """True if ``path`` is a file with a non-zero size.
 

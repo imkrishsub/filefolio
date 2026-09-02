@@ -1,5 +1,6 @@
 """Unit tests for backend.storage — path rules, no HTTP and no app fixtures."""
 
+import os
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -582,3 +583,70 @@ class TestMigration:
         # the second row was never reached, so its stale absolute file_path is intact.
         assert _file_paths(factory) == ["Invoice/2026/first.pdf", str(second)]
         assert (upload_dir / "Invoice" / "2026" / "first.pdf").exists()
+
+
+class TestReplaceFile:
+    def _seed(self, tmp_path):
+        upload = tmp_path / "uploads"
+        (upload / "Invoice" / "2026").mkdir(parents=True)
+        current = upload / "Invoice" / "2026" / "doc.pdf"
+        current.write_bytes(b"%PDF-old")
+        return upload, current
+
+    def test_swaps_contents_keeps_name(self, tmp_path):
+        upload, current = self._seed(tmp_path)
+        new_pdf = tmp_path / "new.pdf"
+        new_pdf.write_bytes(b"%PDF-new")
+
+        storage.replace_file("Invoice/2026/doc.pdf", upload, new_pdf)
+
+        assert current.read_bytes() == b"%PDF-new"
+        assert not new_pdf.exists()
+        assert not (current.parent / "doc.pdf.bak").exists()
+
+    def test_rejects_path_escape(self, tmp_path):
+        upload, _ = self._seed(tmp_path)
+        with pytest.raises(ValueError):
+            storage.replace_file("../evil.pdf", upload, tmp_path / "new.pdf")
+
+    def test_missing_current_file_raises(self, tmp_path):
+        upload, current = self._seed(tmp_path)
+        current.unlink()
+        new_pdf = tmp_path / "new.pdf"
+        new_pdf.write_bytes(b"%PDF-new")
+        with pytest.raises(ValueError):
+            storage.replace_file("Invoice/2026/doc.pdf", upload, new_pdf)
+
+    def test_original_restored_when_swap_fails(self, tmp_path, monkeypatch):
+        upload, current = self._seed(tmp_path)
+        new_pdf = tmp_path / "new.pdf"
+        new_pdf.write_bytes(b"%PDF-new")
+
+        real_replace = os.replace
+        calls = {"n": 0}
+
+        def flaky_replace(src, dst):
+            calls["n"] += 1
+            if calls["n"] == 2:  # the new-file-into-place step
+                raise OSError("boom")
+            return real_replace(src, dst)
+
+        monkeypatch.setattr(os, "replace", flaky_replace)
+
+        with pytest.raises(OSError):
+            storage.replace_file("Invoice/2026/doc.pdf", upload, new_pdf)
+
+        assert current.read_bytes() == b"%PDF-old"
+        assert not (current.parent / "doc.pdf.bak").exists()
+
+    def test_keep_backup_returns_backup_path(self, tmp_path):
+        upload, current = self._seed(tmp_path)
+        new_pdf = tmp_path / "new.pdf"
+        new_pdf.write_bytes(b"%PDF-new")
+
+        backup = storage.replace_file("Invoice/2026/doc.pdf", upload, new_pdf, keep_backup=True)
+
+        assert backup == current.parent / "doc.pdf.bak"
+        assert backup.read_bytes() == b"%PDF-old"
+        assert current.read_bytes() == b"%PDF-new"
+        assert not new_pdf.exists()

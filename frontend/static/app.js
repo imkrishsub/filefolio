@@ -1461,19 +1461,36 @@ if (restoreFileInput) {
 
 let pdfToolState = { op: null, docId: null };
 
+function closeAllToolsMenus() {
+    document.querySelectorAll('.tools-dropdown').forEach(d => { d.hidden = true; });
+}
+
 function toggleToolsMenu(docId) {
-    document.querySelectorAll('.tools-dropdown').forEach(d => {
-        if (d.id !== `tools-dropdown-${docId}`) d.hidden = true;
-    });
     const el = document.getElementById(`tools-dropdown-${docId}`);
-    if (el) el.hidden = !el.hidden;
+    if (!el) return;
+    const reopen = el.hidden;
+    closeAllToolsMenus();
+    if (!reopen) return;
+
+    el.hidden = false;
+    // The menu is position:fixed so it escapes the card's overflow:hidden
+    // (grid view) and the table cell (list view). Place it from the toggle
+    // button's viewport rect, flipping upward when there is little room below.
+    const btn = el.previousElementSibling;
+    const r = btn.getBoundingClientRect();
+    const mh = el.offsetHeight;
+    const mw = el.offsetWidth;
+    const openUp = (window.innerHeight - r.bottom) < mh + 8 && r.top > mh + 8;
+    el.style.top = `${Math.max(4, openUp ? r.top - mh - 4 : r.bottom + 4)}px`;
+    el.style.left = `${Math.max(4, Math.min(r.right - mw, window.innerWidth - mw - 4))}px`;
 }
 
 document.addEventListener('click', (e) => {
-    if (!e.target.closest('.tools-menu')) {
-        document.querySelectorAll('.tools-dropdown').forEach(d => d.hidden = true);
-    }
+    if (!e.target.closest('.tools-menu')) closeAllToolsMenus();
 });
+// A fixed-positioned menu would drift from its button on scroll/resize.
+window.addEventListener('scroll', closeAllToolsMenus, true);
+window.addEventListener('resize', closeAllToolsMenus);
 
 const PDF_TOOL_CONFIG = {
     merge:        { pages: false, degrees: false, download: true,  explainer: 'pdf.merge_explainer' },

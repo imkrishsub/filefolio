@@ -1145,12 +1145,18 @@ Provide:
    Invoice, Receipt, Contract, Letter, Report, Form, Statement, Legal, Medical, Tax, Insurance, Other
 2. Relevant tags (3-5 SPECIFIC English keywords that describe what the document is about, NOT generic category names)
 3. A filename - a short descriptive name for this document, in English
-   - Follow this shape: issuer-document-type-month-year
-   - Take the issuer name from THIS document's text only
+   - Follow this shape: issuer-document-type, optionally followed by -month-year
+   - The issuer is the organisation, company or sender name. Take it from THIS
+     document's text only
+   - NEVER use an account, member, customer, policy, reference or invoice number
+     as the issuer - always prefer the organisation name over any such identifier
    - Do NOT copy any organisation name from these instructions
    - Do NOT reuse words from the original filename such as "scan", "document" or "untitled"
    - Lowercase, words separated by hyphens, 3-6 words
-   - Include a month and year ONLY if the document clearly states one
+   - Append -month-year ONLY if the document is dated that month. A start,
+     effective or valid-from date - especially one in the future - is NOT the
+     document's date. If you are unsure of the date, omit it entirely rather
+     than guess or infer one
    - NO file extension, NO directory path, NO spaces or underscores
 
 Document excerpt:

@@ -237,6 +237,94 @@ class TestFilenameGeneration:
         assert timestamp[9:].isdigit()
 
 
+class TestSanitizeAutoFilename:
+    """Tests for _sanitize_auto_filename - turning a model suggestion into a safe name."""
+
+    @pytest.fixture(autouse=True)
+    def _import(self):
+        from backend.main import _sanitize_auto_filename
+        self.sanitize = staticmethod(_sanitize_auto_filename)
+
+    def test_plain_stem_becomes_lowercase_hyphenated_pdf(self):
+        assert self.sanitize("Summit Fitness Membership", "scan_0012.pdf") == "summit-fitness-membership.pdf"
+
+    def test_strips_directory_components(self):
+        assert self.sanitize("../../etc/passwd-invoice", "x.pdf") == "passwd-invoice.pdf"
+        assert self.sanitize("C:\\Users\\bob\\rent-statement", "x.pdf") == "rent-statement.pdf"
+
+    def test_strips_model_supplied_extension(self):
+        assert self.sanitize("acme-invoice-may-2026.pdf", "x.pdf") == "acme-invoice-may-2026.pdf"
+
+    def test_underscores_and_spaces_become_single_hyphen(self):
+        assert self.sanitize("acme_corp   tax  notice", "x.pdf") == "acme-corp-tax-notice.pdf"
+
+    def test_collapses_and_trims_hyphens(self):
+        assert self.sanitize("--acme--corp--", "x.pdf") == "acme-corp.pdf"
+
+    def test_non_string_returns_none(self):
+        assert self.sanitize(None, "x.pdf") is None
+        assert self.sanitize(123, "x.pdf") is None
+
+    def test_nothing_usable_returns_none(self):
+        assert self.sanitize("", "x.pdf") is None
+        assert self.sanitize("   ", "x.pdf") is None
+        assert self.sanitize("!!!", "x.pdf") is None
+
+    def test_long_stem_is_truncated_to_60_chars(self):
+        result = self.sanitize("word-" * 30, "x.pdf")
+        stem = result[: -len(".pdf")]
+        assert len(stem) <= 60
+
+    def test_keeps_original_extension_lowercased(self):
+        assert self.sanitize("acme-invoice", "SCAN.PDF") == "acme-invoice.pdf"
+
+    def test_weird_original_extension_falls_back_to_pdf(self):
+        assert self.sanitize("acme-invoice", "scan.weirdlong") == "acme-invoice.pdf"
+
+
+class TestFilenamePromptConstraints:
+    """The filename section of the Ollama prompt must carry the T029 guardrails."""
+
+    def _run(self, monkeypatch, model_filename="summit-fitness-membership"):
+        from backend import main
+
+        captured = {}
+
+        def fake_chat(model, messages):
+            captured["prompt"] = messages[0]["content"]
+            return {
+                "message": {
+                    "content": (
+                        '{"category": "Other", "tags": ["gym", "membership"], '
+                        f'"filename": "{model_filename}"}}'
+                    )
+                }
+            }
+
+        monkeypatch.setattr(main, "get_existing_tags", lambda: [])
+        monkeypatch.setattr(main.ollama, "chat", fake_chat)
+        tags, category, auto_filename = main.process_document(
+            "Summit Fitness membership confirmation. Member number 3391.", "scan_0012.pdf"
+        )
+        return captured["prompt"], auto_filename
+
+    def test_prompt_forbids_using_an_identifier_as_the_issuer(self, monkeypatch):
+        prompt, _ = self._run(monkeypatch)
+        assert "account, member, customer, policy, reference or invoice number" in prompt
+        assert "prefer the organisation name over any such identifier" in prompt
+
+    def test_prompt_makes_the_date_optional_and_forbids_guessing(self, monkeypatch):
+        prompt, _ = self._run(monkeypatch)
+        assert "optionally followed by -month-year" in prompt
+        assert "If you are unsure of the date, omit it entirely" in prompt
+        assert "than guess or infer one" in prompt
+        assert "in the future - is NOT the\n     document's date" in prompt
+
+    def test_model_supplied_filename_passes_through(self, monkeypatch):
+        _, auto_filename = self._run(monkeypatch)
+        assert auto_filename == "summit-fitness-membership.pdf"
+
+
 class TestDatabaseFTSIntegration:
     """Tests for full-text search database integration."""
 

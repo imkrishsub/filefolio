@@ -495,9 +495,12 @@ async function loadDocuments(showSkeletons = false) {
 function renderSkeletonLoaders() {
     const skeletonCount = 6;
 
+    const skeletonBody = documentsTable.querySelector('tbody');
+
     if (currentView === 'grid') {
         documentsList.style.display = 'grid';
         documentsTable.style.display = 'none';
+        skeletonBody.innerHTML = '';
 
         const skeletons = Array(skeletonCount).fill(0).map(() => `
             <div class="skeleton-card">
@@ -511,8 +514,9 @@ function renderSkeletonLoaders() {
     } else {
         documentsList.style.display = 'none';
         documentsTable.style.display = 'table';
+        documentsList.innerHTML = '';
 
-        const tbody = documentsTable.querySelector('tbody');
+        const tbody = skeletonBody;
         const skeletons = Array(skeletonCount).fill(0).map(() => `
             <tr>
                 <td colspan="6">
@@ -534,9 +538,15 @@ function renderDocuments() {
         ? t('documents.no_results')
         : t('documents.empty');
 
+    // Only one view is populated at a time. The hidden view must be emptied,
+    // or its stale nodes keep colliding on ids like `tools-dropdown-<n>` with
+    // the visible view, and getElementById() then returns the hidden copy.
+    const tableBody = documentsTable.querySelector('tbody');
+
     if (currentView === 'grid') {
         documentsList.style.display = 'grid';
         documentsTable.style.display = 'none';
+        tableBody.innerHTML = '';
 
         if (documentsData.length === 0) {
             documentsList.innerHTML = `<p class="empty-state">${emptyMessage}</p>`;
@@ -546,8 +556,9 @@ function renderDocuments() {
     } else {
         documentsList.style.display = 'none';
         documentsTable.style.display = 'table';
+        documentsList.innerHTML = '';
 
-        const tbody = documentsTable.querySelector('tbody');
+        const tbody = tableBody;
         if (documentsData.length === 0) {
             tbody.innerHTML = `
                 <tr class="empty-state-row">

@@ -325,6 +325,14 @@ function testToolsMenuWiring() {
         'renderDocuments should close/restore tools menus before re-rendering'
     );
 
+    const rd = src.match(/function renderDocuments\(\)\s*\{[\s\S]*?\n\}/)[0];
+    console.assert(
+        /documentsList\.innerHTML\s*=\s*['"]['"]/.test(rd) &&
+        /(tableBody|tbody)\.innerHTML\s*=\s*['"]['"]/.test(rd),
+        'renderDocuments must empty the inactive view (grid vs table) so ids like ' +
+        'tools-dropdown-<n> are not duplicated across both'
+    );
+
     const row = src.match(/function createDocumentRow\(doc\)\s*\{[\s\S]*?\n\}/);
     console.assert(row !== null, 'createDocumentRow should exist');
     const cell = row[0].match(/<td class="actions-cell">[\s\S]*?<\/td>/);

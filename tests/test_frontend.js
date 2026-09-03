@@ -305,6 +305,38 @@ function testPdfToolConfig() {
     console.log('✓ PDF tool config tests passed');
 }
 
+function testToolsMenuWiring() {
+    // Guards for two layout bugs fixed after the first browser smoke test:
+    //  1. The card keeps a retained transform (fadeInUp ...forwards, :hover
+    //     lift), so a position:fixed dropdown is contained + clipped by the
+    //     card. The menu must be portaled to <body> while open.
+    //  2. Table rows need the same .document-actions flex wrapper as cards,
+    //     or .btn-icon (display:flex) stacks the buttons vertically.
+    const src = require('fs').readFileSync(
+        __dirname + '/../frontend/static/app.js', 'utf8'
+    );
+
+    console.assert(
+        /document\.body\.appendChild\(el\)/.test(src) && /_toolsHome/.test(src),
+        'toggleToolsMenu should portal the dropdown to <body> and remember its home'
+    );
+    console.assert(
+        /function renderDocuments\(\)\s*\{[\s\S]{0,200}closeAllToolsMenus\(\)/.test(src),
+        'renderDocuments should close/restore tools menus before re-rendering'
+    );
+
+    const row = src.match(/function createDocumentRow\(doc\)\s*\{[\s\S]*?\n\}/);
+    console.assert(row !== null, 'createDocumentRow should exist');
+    const cell = row[0].match(/<td class="actions-cell">[\s\S]*?<\/td>/);
+    console.assert(cell !== null, 'createDocumentRow should render a .actions-cell');
+    console.assert(
+        /<div class="document-actions">/.test(cell[0]),
+        'the row actions cell must wrap its buttons in .document-actions so they stay on one line'
+    );
+
+    console.log('✓ Tools menu wiring tests passed');
+}
+
 // Run all tests
 function runAllTests() {
     console.log('Running FileFolio frontend tests...\n');
@@ -320,6 +352,7 @@ function runAllTests() {
     testFilenameEscaping();
     testDateFormatting();
     testPdfToolConfig();
+    testToolsMenuWiring();
 
     console.log('\n✓ All frontend tests completed');
 }
@@ -338,6 +371,7 @@ if (typeof module !== 'undefined' && module.exports) {
         testFilenameEscaping,
         testDateFormatting,
         testPdfToolConfig,
+        testToolsMenuWiring,
         runAllTests
     };
 }

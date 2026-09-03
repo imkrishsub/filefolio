@@ -526,6 +526,9 @@ function renderSkeletonLoaders() {
 }
 
 function renderDocuments() {
+    // A portaled tools menu lives on <body>; its home card is about to be
+    // replaced, so put it back first or it would be orphaned.
+    closeAllToolsMenus();
     const hasSearch = searchInput.value;
     const emptyMessage = hasSearch
         ? t('documents.no_results')
@@ -639,6 +642,7 @@ function createDocumentRow(doc) {
             </td>
             <td onclick="previewDocument(${doc.id}, '${displayFilename.replace(/'/g, "\\'")}')" style="cursor: pointer;">${uploadDate}</td>
             <td class="actions-cell">
+                <div class="document-actions">
                 <button class="btn-icon" onclick="editDocument(${doc.id}, '${displayFilename.replace(/'/g, "\\'")}', '${doc.category}', ${JSON.stringify(doc.tags).replace(/"/g, '&quot;')})" title="Edit document">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
@@ -663,6 +667,7 @@ function createDocumentRow(doc) {
                         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                     </svg>
                 </button>
+                </div>
             </td>
         </tr>
     `;
@@ -1462,7 +1467,16 @@ if (restoreFileInput) {
 let pdfToolState = { op: null, docId: null };
 
 function closeAllToolsMenus() {
-    document.querySelectorAll('.tools-dropdown').forEach(d => { d.hidden = true; });
+    document.querySelectorAll('.tools-dropdown').forEach(d => {
+        d.hidden = true;
+        // Return a portaled menu to its .tools-menu so the card's toggle
+        // button can find it again by id on the next click.
+        if (d._toolsHome && d.parentElement === document.body) {
+            d._toolsHome.appendChild(d);
+            d.style.top = '';
+            d.style.left = '';
+        }
+    });
 }
 
 function toggleToolsMenu(docId) {
@@ -1472,12 +1486,19 @@ function toggleToolsMenu(docId) {
     closeAllToolsMenus();
     if (!reopen) return;
 
-    el.hidden = false;
-    // The menu is position:fixed so it escapes the card's overflow:hidden
-    // (grid view) and the table cell (list view). Place it from the toggle
-    // button's viewport rect, flipping upward when there is little room below.
-    const btn = el.previousElementSibling;
+    // Measure the toggle button before moving the menu.
+    const btn = el.parentElement.querySelector('button');
     const r = btn.getBoundingClientRect();
+
+    // Portal the menu to <body>. The document card keeps a retained
+    // transform (from its fadeInUp animation and :hover lift), which makes
+    // it the containing block for position:fixed descendants and clips them
+    // via overflow:hidden. Re-parenting to <body> makes the fixed
+    // coordinates truly viewport-relative.
+    el._toolsHome = el.parentElement;
+    document.body.appendChild(el);
+    el.hidden = false;
+
     const mh = el.offsetHeight;
     const mw = el.offsetWidth;
     const openUp = (window.innerHeight - r.bottom) < mh + 8 && r.top > mh + 8;
@@ -1521,7 +1542,7 @@ function openPdfTool(op, docId = null) {
     status.hidden = true;
     status.textContent = '';
     status.classList.remove('form-status--error');
-    document.querySelectorAll('.tools-dropdown').forEach(d => d.hidden = true);
+    closeAllToolsMenus();
     document.getElementById('pdf-tool-modal').style.display = 'flex';
 }
 

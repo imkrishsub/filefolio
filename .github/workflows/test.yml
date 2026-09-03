@@ -12,9 +12,11 @@ jobs:
 
     strategy:
       matrix:
-        # 3.9 is the floor: backend.storage uses Path.is_relative_to on the hot
-        # read path, which does not exist before 3.9. README states 3.10+.
-        python-version: ['3.9', '3.10', '3.11']
+        # 3.10 is the floor, matching pyproject.toml and README. backend.storage
+        # uses Path.is_relative_to (3.9+), so the constraint is the stated
+        # support policy, not a language feature. 3.9 reached end-of-life in
+        # October 2025 and is no longer tested.
+        python-version: ['3.10', '3.11']
 
     steps:
     - name: Checkout code

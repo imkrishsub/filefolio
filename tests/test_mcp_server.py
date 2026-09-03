@@ -116,3 +116,59 @@ class TestToolDelegation:
         """A new client function should not be silently missing from MCP."""
         for name in ("search", "get_document", "download", "upload", "update"):
             assert hasattr(mcp_server, f"filefolio_{name}")
+        for name in (
+            "pdf_merge",
+            "pdf_split",
+            "pdf_extract",
+            "pdf_delete_pages",
+            "pdf_rotate",
+            "pdf_ocr",
+        ):
+            assert hasattr(mcp_server, f"filefolio_{name}")
+
+
+class TestPdfToolDelegation:
+    @pytest.mark.asyncio
+    async def test_merge_delegates(self, monkeypatch):
+        seen = {}
+
+        async def fake(doc_ids, **kw):
+            seen["ids"] = doc_ids
+            seen["kw"] = kw
+            return {"id": 5}
+
+        monkeypatch.setattr(client, "pdf_merge", fake)
+        assert await mcp_server.filefolio_pdf_merge([1, 2]) == {"id": 5}
+        assert seen["ids"] == [1, 2]
+
+    @pytest.mark.asyncio
+    async def test_split_passes_dest_dir(self, monkeypatch):
+        seen = {}
+
+        async def fake(doc_id, ranges, **kw):
+            seen.update(kw)
+            return []
+
+        monkeypatch.setattr(client, "pdf_split", fake)
+        await mcp_server.filefolio_pdf_split(1, "1-2", dest_dir="/tmp/out")
+        assert seen["download_dir"] == "/tmp/out"
+
+    @pytest.mark.asyncio
+    async def test_rotate_delegates(self, monkeypatch):
+        seen = {}
+
+        async def fake(doc_id, degrees, pages="all"):
+            seen.update(doc_id=doc_id, degrees=degrees, pages=pages)
+            return {"id": doc_id}
+
+        monkeypatch.setattr(client, "pdf_rotate", fake)
+        await mcp_server.filefolio_pdf_rotate(3, 90)
+        assert seen == {"doc_id": 3, "degrees": 90, "pages": "all"}
+
+    @pytest.mark.asyncio
+    async def test_ocr_delegates(self, monkeypatch):
+        async def fake(doc_id):
+            return {"id": doc_id}
+
+        monkeypatch.setattr(client, "pdf_ocr", fake)
+        assert await mcp_server.filefolio_pdf_ocr(7) == {"id": 7}

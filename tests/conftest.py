@@ -88,6 +88,27 @@ def sample_pdf_file(temp_test_dir, sample_pdf_bytes):
 
 
 @pytest.fixture
+def multipage_pdf_bytes():
+    """A 5-page PDF; each page a distinct size so pages can be told apart."""
+    writer = PdfWriter()
+    for i in range(5):
+        writer.add_blank_page(width=200 + i, height=300)
+    buf = io.BytesIO()
+    writer.write(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+@pytest.fixture
+def multipage_pdf_file(temp_test_dir, multipage_pdf_bytes):
+    pdf_path = temp_test_dir / "multipage.pdf"
+    pdf_path.write_bytes(multipage_pdf_bytes)
+    yield pdf_path
+    if pdf_path.exists():
+        pdf_path.unlink()
+
+
+@pytest.fixture
 def sample_image():
     """Create a sample image for thumbnail testing."""
     img = Image.new('RGB', (200, 200), color='white')

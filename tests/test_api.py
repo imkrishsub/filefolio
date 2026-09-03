@@ -15,6 +15,8 @@ import pypdf
 import pytest
 from pypdf import PdfWriter
 
+from backend import storage
+
 
 class TestRootEndpoint:
     """Tests for the root endpoint."""
@@ -200,6 +202,22 @@ class TestUploadEndpoint:
             files={"file": (bad_name, io.BytesIO(b"%PDF-1.4"), "application/pdf")},
         )
         assert response.status_code == 400
+
+    def test_ingest_pdf_files_a_staged_pdf(self, test_db, multipage_pdf_bytes, mock_ollama_response):
+        """ingest_pdf() is the shared pipeline; a staged PDF lands in the store."""
+        import backend.main as main
+        from backend import storage
+
+        staging = storage.staging_dir(main.UPLOAD_DIR)
+        staging.mkdir(parents=True, exist_ok=True)
+        staged = staging / "20260902_120000_report.pdf"
+        staged.write_bytes(multipage_pdf_bytes)
+
+        result = main.ingest_pdf(staged, "report.pdf", source_label="test")
+
+        assert result["id"] > 0
+        assert result["original_filename"] == "report.pdf"
+        assert not staged.exists()  # moved out of staging
 
 
 class TestUploadStorageLayout:
@@ -2279,3 +2297,217 @@ class TestUploadPersistsAutoFilename:
 
         assert response.status_code == 200
         assert response.json()["auto_filename"] is None
+
+
+class TestPdfMerge:
+    def _upload(self, client, pdf_bytes, name):
+        r = client.post("/upload", files={"file": (name, io.BytesIO(pdf_bytes), "application/pdf")})
+        assert r.status_code == 200
+        return r.json()["id"]
+
+    def test_merge_files_a_new_document(self, client, multipage_pdf_bytes, sample_pdf_bytes, mock_ollama_response):
+        a = self._upload(client, multipage_pdf_bytes, "a.pdf")
+        b = self._upload(client, sample_pdf_bytes, "b.pdf")
+
+        r = client.post("/pdf/merge", json={"document_ids": [a, b]})
+
+        assert r.status_code == 200
+        assert r.json()["id"] not in (a, b)
+
+    def test_merge_download_only_returns_pdf(self, client, multipage_pdf_bytes, sample_pdf_bytes, mock_ollama_response):
+        a = self._upload(client, multipage_pdf_bytes, "a.pdf")
+        b = self._upload(client, sample_pdf_bytes, "b.pdf")
+
+        r = client.post("/pdf/merge", json={"document_ids": [a, b], "file": False})
+
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "application/pdf"
+        assert r.content[:4] == b"%PDF"
+
+    def test_merge_needs_two_ids(self, client, sample_pdf_bytes, mock_ollama_response):
+        a = self._upload(client, sample_pdf_bytes, "a.pdf")
+        r = client.post("/pdf/merge", json={"document_ids": [a]})
+        assert r.status_code == 422
+
+    def test_merge_unknown_id_is_404(self, client, sample_pdf_bytes, mock_ollama_response):
+        a = self._upload(client, sample_pdf_bytes, "a.pdf")
+        r = client.post("/pdf/merge", json={"document_ids": [a, 99999]})
+        assert r.status_code == 404
+
+    def test_merge_duplicate_output_is_409(self, client, multipage_pdf_bytes, sample_pdf_bytes, mock_ollama_response):
+        # Two distinct source documents so both uploads succeed; merging the same
+        # pair twice produces byte-identical output, which ingest_pdf dedups by hash.
+        a = self._upload(client, multipage_pdf_bytes, "a.pdf")
+        b = self._upload(client, sample_pdf_bytes, "b.pdf")
+        first = client.post("/pdf/merge", json={"document_ids": [a, b]})
+        assert first.status_code == 200
+        r = client.post("/pdf/merge", json={"document_ids": [a, b]})
+        assert r.status_code == 409
+
+
+class TestPdfSplit:
+    def _upload(self, client, pdf_bytes, name="m.pdf"):
+        r = client.post("/upload", files={"file": (name, io.BytesIO(pdf_bytes), "application/pdf")})
+        return r.json()["id"]
+
+    def test_split_files_one_document_per_group(self, client, multipage_pdf_bytes, mock_ollama_response):
+        doc = self._upload(client, multipage_pdf_bytes)
+        r = client.post("/pdf/split", json={"document_id": doc, "ranges": "1-2,3-5"})
+        assert r.status_code == 200
+        body = r.json()
+        assert isinstance(body, list) and len(body) == 2
+
+    def test_split_download_only_returns_zip(self, client, multipage_pdf_bytes, mock_ollama_response):
+        doc = self._upload(client, multipage_pdf_bytes)
+        r = client.post("/pdf/split", json={"document_id": doc, "ranges": "1,2-5", "file": False})
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "application/zip"
+        z = zipfile.ZipFile(io.BytesIO(r.content))
+        assert len(z.namelist()) == 2
+
+    def test_split_bad_range_is_400(self, client, multipage_pdf_bytes, mock_ollama_response):
+        doc = self._upload(client, multipage_pdf_bytes)
+        r = client.post("/pdf/split", json={"document_id": doc, "ranges": "9-20"})
+        assert r.status_code == 400
+
+    def test_split_unknown_doc_is_404(self, client):
+        r = client.post("/pdf/split", json={"document_id": 55555, "ranges": "1"})
+        assert r.status_code == 404
+
+    def test_split_corrupt_stored_file_is_400(
+        self, client, multipage_pdf_bytes, mock_ollama_response, test_db
+    ):
+        import backend.main as main
+        doc = self._upload(client, multipage_pdf_bytes)
+        conn = main.get_db_connection()
+        file_path = conn.execute(
+            "SELECT file_path FROM documents WHERE id=?", (doc,)
+        ).fetchone()[0]
+        conn.close()
+        storage.resolve(file_path, main.UPLOAD_DIR).write_bytes(b"not a pdf")
+
+        r = client.post("/pdf/split", json={"document_id": doc, "ranges": "1-2"})
+        assert r.status_code == 400
+
+
+class TestPdfExtractAndDelete:
+    def _upload(self, client, pdf_bytes, name="m.pdf"):
+        return client.post("/upload", files={"file": (name, io.BytesIO(pdf_bytes), "application/pdf")}).json()["id"]
+
+    def test_extract_files_a_document_with_only_those_pages(self, client, multipage_pdf_bytes, mock_ollama_response):
+        doc = self._upload(client, multipage_pdf_bytes)
+        r = client.post("/pdf/extract", json={"document_id": doc, "pages": "2-3"})
+        assert r.status_code == 200
+        assert r.json()["id"] != doc
+
+    def test_extract_download_only(self, client, multipage_pdf_bytes, mock_ollama_response):
+        doc = self._upload(client, multipage_pdf_bytes)
+        r = client.post("/pdf/extract", json={"document_id": doc, "pages": "1", "file": False})
+        assert r.status_code == 200 and r.content[:4] == b"%PDF"
+
+    def test_delete_pages_files_a_document(self, client, multipage_pdf_bytes, mock_ollama_response):
+        doc = self._upload(client, multipage_pdf_bytes)
+        r = client.post("/pdf/delete-pages", json={"document_id": doc, "pages": "1,5"})
+        assert r.status_code == 200
+
+    def test_delete_all_pages_is_400(self, client, multipage_pdf_bytes, mock_ollama_response):
+        doc = self._upload(client, multipage_pdf_bytes)
+        r = client.post("/pdf/delete-pages", json={"document_id": doc, "pages": "1-5"})
+        assert r.status_code == 400
+
+
+class TestPdfRotate:
+    def _upload(self, client, pdf_bytes, name="m.pdf"):
+        return client.post("/upload", files={"file": (name, io.BytesIO(pdf_bytes), "application/pdf")}).json()["id"]
+
+    def test_rotate_keeps_the_same_document_id(self, client, multipage_pdf_bytes, mock_ollama_response):
+        doc = self._upload(client, multipage_pdf_bytes)
+        r = client.post("/pdf/rotate", json={"document_id": doc, "degrees": 90})
+        assert r.status_code == 200
+        assert r.json()["id"] == doc
+
+    def test_rotate_changes_the_stored_file(self, client, multipage_pdf_bytes, mock_ollama_response, test_db):
+        import backend.main as main
+        doc = self._upload(client, multipage_pdf_bytes)
+        conn = main.get_db_connection()
+        before = conn.execute("SELECT file_hash FROM documents WHERE id=?", (doc,)).fetchone()[0]
+        conn.close()
+
+        client.post("/pdf/rotate", json={"document_id": doc, "degrees": 180})
+
+        conn = main.get_db_connection()
+        after = conn.execute("SELECT file_hash FROM documents WHERE id=?", (doc,)).fetchone()[0]
+        conn.close()
+        assert before != after
+
+    def test_rotate_bad_angle_is_422(self, client, multipage_pdf_bytes, mock_ollama_response):
+        doc = self._upload(client, multipage_pdf_bytes)
+        r = client.post("/pdf/rotate", json={"document_id": doc, "degrees": 45})
+        assert r.status_code == 422
+
+    def test_rotate_unknown_doc_is_404(self, client):
+        r = client.post("/pdf/rotate", json={"document_id": 4242, "degrees": 90})
+        assert r.status_code == 404
+
+    def test_rotate_corrupt_stored_file_is_400(
+        self, client, multipage_pdf_bytes, mock_ollama_response, test_db
+    ):
+        import backend.main as main
+        doc = self._upload(client, multipage_pdf_bytes)
+        conn = main.get_db_connection()
+        file_path = conn.execute(
+            "SELECT file_path FROM documents WHERE id=?", (doc,)
+        ).fetchone()[0]
+        conn.close()
+        storage.resolve(file_path, main.UPLOAD_DIR).write_bytes(b"not a pdf")
+
+        r = client.post("/pdf/rotate", json={"document_id": doc, "degrees": 90, "pages": "1"})
+        assert r.status_code == 400
+
+    def test_rotate_rolls_back_when_db_update_fails(self, client, multipage_pdf_bytes, mock_ollama_response, monkeypatch, test_db):
+        import backend.main as main
+        doc = self._upload(client, multipage_pdf_bytes)
+        conn = main.get_db_connection()
+        original_hash = conn.execute("SELECT file_hash FROM documents WHERE id=?", (doc,)).fetchone()[0]
+        conn.close()
+
+        def boom(*a, **k):
+            raise sqlite3.OperationalError("disk full")
+        monkeypatch.setattr(main, "_persist_in_place_update", boom)
+
+        r = client.post("/pdf/rotate", json={"document_id": doc, "degrees": 90})
+        assert r.status_code == 500
+
+        conn = main.get_db_connection()
+        row = conn.execute("SELECT file_hash, file_path FROM documents WHERE id=?", (doc,)).fetchone()
+        conn.close()
+        assert row[0] == original_hash
+        assert storage.resolve(row[1], main.UPLOAD_DIR).is_file()
+
+
+class TestPdfOcr:
+    def _upload(self, client, pdf_bytes, name="m.pdf"):
+        return client.post("/upload", files={"file": (name, io.BytesIO(pdf_bytes), "application/pdf")}).json()["id"]
+
+    def test_ocr_unknown_doc_is_404(self, client):
+        r = client.post("/pdf/ocr", json={"document_id": 8888})
+        assert r.status_code == 404
+
+    def test_ocr_reports_missing_binary_as_500(self, client, multipage_pdf_bytes, mock_ollama_response, monkeypatch):
+        import backend.pdf_ops as pdf_ops
+        doc = self._upload(client, multipage_pdf_bytes)
+
+        def missing(source, dest):
+            raise RuntimeError("ocrmypdf is not installed. Install it (and ghostscript) to use OCR.")
+        monkeypatch.setattr(pdf_ops, "ocr", missing)
+
+        r = client.post("/pdf/ocr", json={"document_id": doc})
+        assert r.status_code == 500
+        assert "ocrmypdf" in r.json()["detail"]
+
+    @pytest.mark.slow
+    @pytest.mark.skipif(shutil.which("ocrmypdf") is None, reason="ocrmypdf not installed")
+    def test_ocr_keeps_the_same_document_id(self, client, multipage_pdf_bytes, mock_ollama_response):
+        doc = self._upload(client, multipage_pdf_bytes)
+        r = client.post("/pdf/ocr", json={"document_id": doc})
+        assert r.status_code == 200 and r.json()["id"] == doc

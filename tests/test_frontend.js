@@ -276,6 +276,75 @@ function testDateFormatting() {
     console.log('✓ Date formatting tests passed');
 }
 
+// Test: PDF tool configuration
+function testPdfToolConfig() {
+    // Read the real PDF_TOOL_CONFIG object literal out of app.js so this test
+    // fails if that config changes shape.
+    const src = require('fs').readFileSync(
+        __dirname + '/../frontend/static/app.js', 'utf8'
+    );
+    const match = src.match(/const PDF_TOOL_CONFIG\s*=\s*(\{[\s\S]*?\n\});/);
+    console.assert(match !== null, 'app.js should define a PDF_TOOL_CONFIG object literal');
+    const PDF_TOOL_CONFIG = new Function('return ' + match[1])();
+
+    const ops = ['merge', 'split', 'extract', 'delete_pages', 'rotate', 'ocr'];
+    ops.forEach(op => {
+        console.assert(PDF_TOOL_CONFIG[op] !== undefined, `PDF_TOOL_CONFIG should include "${op}"`);
+    });
+    console.assert(Object.keys(PDF_TOOL_CONFIG).length === 6, 'PDF_TOOL_CONFIG should have exactly 6 ops');
+
+    console.assert(PDF_TOOL_CONFIG.merge.pages === false, 'merge should set pages: false');
+    console.assert(PDF_TOOL_CONFIG.ocr.pages === false, 'ocr should set pages: false');
+
+    ['split', 'extract', 'delete_pages'].forEach(op => {
+        console.assert(PDF_TOOL_CONFIG[op].pages === true, `${op} should set pages: true`);
+    });
+
+    console.assert(PDF_TOOL_CONFIG.rotate.degrees === true, 'rotate should set degrees: true');
+
+    console.log('✓ PDF tool config tests passed');
+}
+
+function testToolsMenuWiring() {
+    // Guards for two layout bugs fixed after the first browser smoke test:
+    //  1. The card keeps a retained transform (fadeInUp ...forwards, :hover
+    //     lift), so a position:fixed dropdown is contained + clipped by the
+    //     card. The menu must be portaled to <body> while open.
+    //  2. Table rows need the same .document-actions flex wrapper as cards,
+    //     or .btn-icon (display:flex) stacks the buttons vertically.
+    const src = require('fs').readFileSync(
+        __dirname + '/../frontend/static/app.js', 'utf8'
+    );
+
+    console.assert(
+        /document\.body\.appendChild\(el\)/.test(src) && /_toolsHome/.test(src),
+        'toggleToolsMenu should portal the dropdown to <body> and remember its home'
+    );
+    console.assert(
+        /function renderDocuments\(\)\s*\{[\s\S]{0,200}closeAllToolsMenus\(\)/.test(src),
+        'renderDocuments should close/restore tools menus before re-rendering'
+    );
+
+    const rd = src.match(/function renderDocuments\(\)\s*\{[\s\S]*?\n\}/)[0];
+    console.assert(
+        /documentsList\.innerHTML\s*=\s*['"]['"]/.test(rd) &&
+        /(tableBody|tbody)\.innerHTML\s*=\s*['"]['"]/.test(rd),
+        'renderDocuments must empty the inactive view (grid vs table) so ids like ' +
+        'tools-dropdown-<n> are not duplicated across both'
+    );
+
+    const row = src.match(/function createDocumentRow\(doc\)\s*\{[\s\S]*?\n\}/);
+    console.assert(row !== null, 'createDocumentRow should exist');
+    const cell = row[0].match(/<td class="actions-cell">[\s\S]*?<\/td>/);
+    console.assert(cell !== null, 'createDocumentRow should render a .actions-cell');
+    console.assert(
+        /<div class="document-actions">/.test(cell[0]),
+        'the row actions cell must wrap its buttons in .document-actions so they stay on one line'
+    );
+
+    console.log('✓ Tools menu wiring tests passed');
+}
+
 // Run all tests
 function runAllTests() {
     console.log('Running FileFolio frontend tests...\n');
@@ -290,6 +359,8 @@ function runAllTests() {
     testSelectionState();
     testFilenameEscaping();
     testDateFormatting();
+    testPdfToolConfig();
+    testToolsMenuWiring();
 
     console.log('\n✓ All frontend tests completed');
 }
@@ -307,6 +378,8 @@ if (typeof module !== 'undefined' && module.exports) {
         testSelectionState,
         testFilenameEscaping,
         testDateFormatting,
+        testPdfToolConfig,
+        testToolsMenuWiring,
         runAllTests
     };
 }

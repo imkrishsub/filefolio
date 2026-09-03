@@ -24,6 +24,7 @@ import shutil
 import sqlite3
 import tempfile
 import urllib.parse
+import uuid
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -38,7 +39,8 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pdf2image import convert_from_path
 from PIL import Image
-from pydantic import BaseModel
+from pydantic import BaseModel, conlist
+from starlette.background import BackgroundTask
 
 app = FastAPI()
 
@@ -170,6 +172,12 @@ try:
     from backend import storage
 except ModuleNotFoundError:
     import storage
+
+
+try:
+    from backend import pdf_ops
+except ModuleNotFoundError:
+    import pdf_ops
 
 
 init_db()
@@ -431,71 +439,31 @@ async def read_root():
     return FileResponse(html_file)
 
 
-@app.post("/upload")
-async def upload_pdf(file: UploadFile = File(...)):
+def ingest_pdf(
+    staged_path: Path, original_filename: str, *, source_label: str = "upload"
+) -> dict:
+    """File a validated, staged PDF: dedup, extract text (+OCR), AI tag, place, thumbnail, index.
+
+    ``staged_path`` must be an already-validated PDF sitting inside
+    ``storage.staging_dir(UPLOAD_DIR)`` and named ``<timestamp>_<safe filename>``.
+    Removes ``staged_path`` on any failure. Returns the new document's metadata:
+    ``{"id", "original_filename", "auto_filename", "tags", "category", "preview"}``.
+    Raises ``HTTPException`` (400 bad/empty/encrypted PDF, 409 duplicate,
+    500 storage failure) exactly as the ``/upload`` endpoint does.
     """
-    Upload and process a PDF document.
+    logger.info("Ingesting staged PDF from %s: %s", source_label, original_filename)
 
-    This endpoint handles the complete document ingestion pipeline:
-    1. Validates the file is a PDF
-    2. Saves with timestamped filename and calculates SHA-256 hash
-    3. Checks for duplicates using the hash
-    4. Extracts text using PyPDF, falls back to OCR for scanned documents
-    5. Generates thumbnail from first page
-    6. Uses local LLM to suggest category and tags
-    7. Stores metadata in SQLite with full-text search index
-
-    Returns: Document metadata including suggested tags and category
-    """
-    # Strip any directory components from the browser-supplied filename
-    raw_filename = file.filename or ""
-    safe_filename = Path(raw_filename.replace("\\", "/")).name
-    if not safe_filename or "\x00" in safe_filename:
-        raise HTTPException(status_code=400, detail="Invalid filename")
-    if not safe_filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
-
-    # Stage the upload: the category, and therefore the destination folder, is not
-    # known until the text has been extracted and processed.
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    stored_filename = f"{timestamp}_{safe_filename}"
-    staging = storage.staging_dir(UPLOAD_DIR)
-    staging.mkdir(parents=True, exist_ok=True)
-    file_path = staging / stored_filename
-
-    # Stream to disk, enforcing size limit and calculating SHA-256 hash in one pass
-    sha256_hash = hashlib.sha256()
-    bytes_written = 0
-    first_chunk = True
-    with file_path.open("wb") as buffer:
-        while chunk := await file.read(8192):
-            if first_chunk:
-                if chunk[:4] != b"%PDF":
-                    file_path.unlink(missing_ok=True)
-                    raise HTTPException(
-                        status_code=400, detail="File is not a valid PDF"
-                    )
-                first_chunk = False
-            bytes_written += len(chunk)
-            if bytes_written > MAX_UPLOAD_SIZE:
-                file_path.unlink(missing_ok=True)
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"File too large. Maximum upload size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB.",
-                )
-            sha256_hash.update(chunk)
-            buffer.write(chunk)
-
-    file_hash = sha256_hash.hexdigest()
+    stored_filename = staged_path.name
+    file_path = staged_path
+    file_hash = hashlib.sha256(staged_path.read_bytes()).hexdigest()
 
     # Everything from here until place() succeeds runs with the PDF sitting in the
     # hidden staging directory, which nothing else garbage-collects: it is excluded
     # from backups and from the migration's recovery search. Any failure in between
     # -- a database error, get_existing_tags(), Ollama, a failed move -- must take
     # the staged file with it, so the whole stretch is wrapped in a cleanup handler.
-    staged_path = file_path
     try:
-        if bytes_written == 0:
+        if staged_path.stat().st_size == 0:
             raise HTTPException(
                 status_code=400, detail="Empty file. Please upload a non-empty PDF."
             )
@@ -565,7 +533,9 @@ async def upload_pdf(file: UploadFile = File(...)):
             text_preview = f"Error extracting text: {str(e)}"
 
         # Process document for AI tagging and naming
-        tags, category, auto_filename = process_document(text_preview, safe_filename)
+        tags, category, auto_filename = process_document(
+            text_preview, original_filename
+        )
 
         # Move out of staging into uploads/<Category>/<Year>/. The filename may be
         # uniquified here, so the thumbnail is generated afterwards from the final
@@ -601,7 +571,7 @@ async def upload_pdf(file: UploadFile = File(...)):
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
             (
-                safe_filename,
+                original_filename,
                 stored_filename,
                 auto_filename,
                 file_path.relative_to(UPLOAD_DIR).as_posix(),
@@ -642,12 +612,337 @@ async def upload_pdf(file: UploadFile = File(...)):
 
     return {
         "id": doc_id,
-        "original_filename": safe_filename,
+        "original_filename": original_filename,
         "auto_filename": auto_filename,
         "tags": tags,
         "category": category,
         "preview": text_preview[:200],
     }
+
+
+@app.post("/upload")
+async def upload_pdf(file: UploadFile = File(...)):
+    """
+    Upload a PDF document.
+
+    Sanitises the browser-supplied filename, streams the upload to the staging
+    directory while enforcing the size limit and the %PDF magic bytes, then
+    delegates the ingestion pipeline (hashing, dedup, text/OCR, thumbnail, LLM
+    tagging, indexing) to ingest_pdf().
+
+    Returns: Document metadata including suggested tags and category
+    """
+    # Strip any directory components from the browser-supplied filename
+    raw_filename = file.filename or ""
+    safe_filename = Path(raw_filename.replace("\\", "/")).name
+    if not safe_filename or "\x00" in safe_filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if not safe_filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+
+    # Stage the upload: the category, and therefore the destination folder, is not
+    # known until the text has been extracted and processed.
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    stored_filename = f"{timestamp}_{safe_filename}"
+    staging = storage.staging_dir(UPLOAD_DIR)
+    staging.mkdir(parents=True, exist_ok=True)
+    file_path = staging / stored_filename
+
+    # Stream to disk, enforcing the size limit and the %PDF magic bytes as the file
+    # arrives. ingest_pdf() recomputes the hash from the staged file, so nothing here
+    # needs to survive past the point where the file is fully written.
+    bytes_written = 0
+    first_chunk = True
+    with file_path.open("wb") as buffer:
+        while chunk := await file.read(8192):
+            if first_chunk:
+                if chunk[:4] != b"%PDF":
+                    file_path.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=400, detail="File is not a valid PDF"
+                    )
+                first_chunk = False
+            bytes_written += len(chunk)
+            if bytes_written > MAX_UPLOAD_SIZE:
+                file_path.unlink(missing_ok=True)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large. Maximum upload size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB.",
+                )
+            buffer.write(chunk)
+
+    return ingest_pdf(file_path, safe_filename)
+
+
+def _load_doc_or_404(doc_id: int):
+    conn = get_db_connection()
+    row = conn.execute(
+        "SELECT * FROM documents WHERE id = ?", (doc_id,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(
+            status_code=404, detail=f"Document {doc_id} not found"
+        )
+    return row
+
+
+def _resolved_pdf_path(row) -> Path:
+    try:
+        path = storage.resolve(row["file_path"], UPLOAD_DIR)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid stored path")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+    return path
+
+
+class PdfMergeRequest(BaseModel):
+    document_ids: conlist(int, min_length=2)
+    file: bool = True
+
+
+@app.post("/pdf/merge")
+async def pdf_merge(request: PdfMergeRequest):
+    sources = [
+        _resolved_pdf_path(_load_doc_or_404(i)) for i in request.document_ids
+    ]
+
+    staging = storage.staging_dir(UPLOAD_DIR)
+    staging.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    merged = staging / f"{timestamp}_merged.pdf"
+    try:
+        pdf_ops.merge(sources, merged)
+    except Exception as exc:
+        merged.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=f"Could not merge: {exc}")
+
+    if not request.file:
+        return FileResponse(
+            merged,
+            media_type="application/pdf",
+            filename="merged.pdf",
+            background=BackgroundTask(merged.unlink, missing_ok=True),
+        )
+    return ingest_pdf(merged, "merged.pdf", source_label="pdf-merge")
+
+
+class PdfSplitRequest(BaseModel):
+    document_id: int
+    ranges: str
+    file: bool = True
+
+
+@app.post("/pdf/split")
+async def pdf_split(request: PdfSplitRequest):
+    """Split a stored PDF into parts by page range.
+
+    If one part fails to file (e.g. it duplicates an existing document), earlier
+    parts remain filed; the response is the error for the failing part.
+    """
+    source = _resolved_pdf_path(_load_doc_or_404(request.document_id))
+    try:
+        groups = pdf_ops.parse_page_ranges(request.ranges, pdf_ops.page_count(source))
+    except (ValueError, pypdf.errors.PyPdfError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    staging = storage.staging_dir(UPLOAD_DIR)
+    staging.mkdir(parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(dir=staging, prefix="split_"))
+    try:
+        parts = pdf_ops.split(source, groups, work)
+        if not request.file:
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for part in parts:
+                    zf.write(part, arcname=part.name)
+            buf.seek(0)
+            return StreamingResponse(
+                buf,
+                media_type="application/zip",
+                headers={"Content-Disposition": 'attachment; filename="split.zip"'},
+            )
+        results = []
+        for part in parts:
+            staged = staging / (
+                f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_"
+                f"{uuid.uuid4().hex[:8]}_{part.name}"
+            )
+            part.replace(staged)
+            results.append(ingest_pdf(staged, part.name, source_label="pdf-split"))
+        return results
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+class PdfPagesRequest(BaseModel):
+    document_id: int
+    pages: str
+    file: bool = True
+
+
+def _single_page_op(request: PdfPagesRequest, op, verb: str):
+    source = _resolved_pdf_path(_load_doc_or_404(request.document_id))
+    try:
+        groups = pdf_ops.parse_page_ranges(request.pages, pdf_ops.page_count(source))
+    except (ValueError, pypdf.errors.PyPdfError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    pages = list(dict.fromkeys(n for group in groups for n in group))
+
+    staging = storage.staging_dir(UPLOAD_DIR)
+    staging.mkdir(parents=True, exist_ok=True)
+    out = staging / (
+        f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_"
+        f"{uuid.uuid4().hex[:8]}_{verb}_{source.stem}.pdf"
+    )
+    try:
+        op(source, pages, out)
+    except ValueError as exc:
+        out.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        out.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=f"Could not {verb}: {exc}")
+
+    if not request.file:
+        return FileResponse(
+            out,
+            media_type="application/pdf",
+            filename=f"{verb}.pdf",
+            background=BackgroundTask(out.unlink, missing_ok=True),
+        )
+    return ingest_pdf(out, f"{verb}_{source.name}", source_label=f"pdf-{verb}")
+
+
+@app.post("/pdf/extract")
+async def pdf_extract(request: PdfPagesRequest):
+    return _single_page_op(request, pdf_ops.extract_pages, "extract")
+
+
+@app.post("/pdf/delete-pages")
+async def pdf_delete_pages(request: PdfPagesRequest):
+    return _single_page_op(request, pdf_ops.delete_pages, "delete")
+
+
+def _extract_text_for_preview(pdf_path: Path) -> str:
+    """First 2000 chars of extractable text; OCR fallback like the upload pipeline."""
+    try:
+        reader = pypdf.PdfReader(pdf_path)
+        text = ""
+        for page in reader.pages[:20]:
+            text += (page.extract_text() or "") + " "
+        if len(text.strip()) < 50:
+            try:
+                for image in convert_from_path(pdf_path, dpi=300)[:20]:
+                    text += pytesseract.image_to_string(image, lang="eng+deu") + " "
+            except Exception as exc:
+                logger.warning("OCR fallback failed during in-place reindex: %s", exc)
+        return text[:2000]
+    except Exception as exc:
+        return f"Error extracting text: {exc}"
+
+
+def _persist_in_place_update(doc_id: int, file_hash: str, content_preview: str) -> None:
+    """UPDATE the row after an in-place file swap. Raises sqlite3.IntegrityError on a hash clash."""
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            "UPDATE documents SET file_hash = ?, content_preview = ? WHERE id = ?",
+            (file_hash, content_preview, doc_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _apply_in_place(row, transform) -> dict:
+    """Run transform(source, dest) -> None, swap the stored file for the result, reindex.
+
+    Holds the pre-swap file as a .bak until the DB update succeeds, so a DB failure
+    after the swap is fully rolled back (bytes + hash + preview all revert).
+    """
+    source = _resolved_pdf_path(row)
+    staging = storage.staging_dir(UPLOAD_DIR)
+    staging.mkdir(parents=True, exist_ok=True)
+    new_pdf = staging / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}_{source.name}"
+    try:
+        transform(source, new_pdf)
+    except (ValueError, pypdf.errors.PyPdfError) as exc:
+        new_pdf.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        new_pdf.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Operation failed: {exc}")
+
+    new_hash = hashlib.sha256(new_pdf.read_bytes()).hexdigest()
+    new_preview = _extract_text_for_preview(new_pdf)
+
+    try:
+        backup = storage.replace_file(row["file_path"], UPLOAD_DIR, new_pdf, keep_backup=True)
+    except OSError as exc:
+        new_pdf.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Could not replace the file: {exc}")
+
+    current = storage.resolve(row["file_path"], UPLOAD_DIR)
+    try:
+        _persist_in_place_update(row["id"], new_hash, new_preview)
+    except sqlite3.IntegrityError:
+        os.replace(str(backup), str(current))
+        raise HTTPException(status_code=409, detail="Result duplicates another document")
+    except Exception as exc:
+        os.replace(str(backup), str(current))
+        raise HTTPException(status_code=500, detail=f"Could not update the document: {exc}")
+    Path(backup).unlink(missing_ok=True)
+
+    generate_thumbnail(current, row["stored_filename"])
+
+    conn = get_db_connection()
+    updated = conn.execute("SELECT * FROM documents WHERE id = ?", (row["id"],)).fetchone()
+    conn.close()
+    return {
+        "id": updated["id"],
+        "original_filename": updated["original_filename"],
+        "auto_filename": updated["auto_filename"],
+        "tags": json.loads(updated["tags"]) if updated["tags"] else [],
+        "category": updated["category"],
+        "preview": (updated["content_preview"] or "")[:200],
+    }
+
+
+class PdfRotateRequest(BaseModel):
+    document_id: int
+    degrees: Literal[90, 180, 270]
+    pages: str = "all"
+
+
+@app.post("/pdf/rotate")
+async def pdf_rotate(request: PdfRotateRequest):
+    row = _load_doc_or_404(request.document_id)
+
+    def transform(source: Path, dest: Path) -> None:
+        if request.pages.strip().lower() == "all":
+            targets = None
+        else:
+            groups = pdf_ops.parse_page_ranges(request.pages, pdf_ops.page_count(source))
+            targets = list(dict.fromkeys(n for g in groups for n in g))
+        pdf_ops.rotate(source, dest, request.degrees, targets)
+
+    return _apply_in_place(row, transform)
+
+
+class PdfOcrRequest(BaseModel):
+    document_id: int
+
+
+@app.post("/pdf/ocr")
+async def pdf_ocr(request: PdfOcrRequest):
+    row = _load_doc_or_404(request.document_id)
+
+    def transform(source: Path, dest: Path) -> None:
+        pdf_ops.ocr(source, dest)
+
+    return _apply_in_place(row, transform)
 
 
 def generate_thumbnail(pdf_path: Path, stored_filename: str):

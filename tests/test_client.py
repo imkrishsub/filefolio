@@ -6,6 +6,7 @@ in the normal venv/ as part of the main suite.
 """
 
 import json
+from pathlib import Path
 
 import httpx
 import pytest
@@ -358,6 +359,155 @@ class TestUpdate:
 
         with pytest.raises(RuntimeError, match="FileFolio not running"):
             await client.update(1, category="Tax")
+
+
+class TestPdfOperations:
+    @pytest.mark.asyncio
+    async def test_merge_files_and_returns_metadata(self, monkeypatch):
+        async def handler(request):
+            assert request.url.path == "/pdf/merge"
+            assert json.loads(request.content) == {"document_ids": [1, 2], "file": True}
+            return httpx.Response(200, json={"id": 9, "category": "Report"})
+        monkeypatch.setattr(client, "_make_client", _client_with_handler(handler))
+        assert await client.pdf_merge([1, 2]) == {"id": 9, "category": "Report"}
+
+    @pytest.mark.asyncio
+    async def test_merge_download_writes_file(self, monkeypatch, tmp_path):
+        async def handler(request):
+            assert json.loads(request.content)["file"] is False
+            return httpx.Response(200, content=b"%PDF-1.7 x", headers={"content-type": "application/pdf"})
+        monkeypatch.setattr(client, "_make_client", _client_with_handler(handler))
+        out = tmp_path / "m.pdf"
+        result = await client.pdf_merge([1, 2], download_to=str(out))
+        assert result == str(out) and out.read_bytes().startswith(b"%PDF")
+
+    @pytest.mark.asyncio
+    async def test_split_download_dir_unpacks_zip(self, monkeypatch, tmp_path):
+        import io, zipfile
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("m_part1.pdf", b"%PDF-a")
+            zf.writestr("m_part2.pdf", b"%PDF-b")
+        buf.seek(0)
+        async def handler(request):
+            return httpx.Response(200, content=buf.read(), headers={"content-type": "application/zip"})
+        monkeypatch.setattr(client, "_make_client", _client_with_handler(handler))
+        paths = await client.pdf_split(1, "1,2", download_dir=str(tmp_path))
+        assert sorted(Path(p).name for p in paths) == ["m_part1.pdf", "m_part2.pdf"]
+
+    @pytest.mark.asyncio
+    async def test_rotate_sends_degrees_and_pages(self, monkeypatch):
+        async def handler(request):
+            assert request.url.path == "/pdf/rotate"
+            assert json.loads(request.content) == {"document_id": 3, "degrees": 90, "pages": "all"}
+            return httpx.Response(200, json={"id": 3})
+        monkeypatch.setattr(client, "_make_client", _client_with_handler(handler))
+        assert await client.pdf_rotate(3, 90) == {"id": 3}
+
+    @pytest.mark.asyncio
+    async def test_ocr_404_raises_runtimeerror(self, monkeypatch):
+        async def handler(request):
+            return httpx.Response(404, json={"detail": "Document 5 not found"})
+        monkeypatch.setattr(client, "_make_client", _client_with_handler(handler))
+        with pytest.raises(RuntimeError):
+            await client.pdf_ocr(5)
+
+    @pytest.mark.asyncio
+    async def test_merge_download_to_missing_dir_raises_without_calling_api(
+        self, monkeypatch
+    ):
+        async def handler(request):
+            raise AssertionError("no HTTP request should be made")
+        monkeypatch.setattr(client, "_make_client", _client_with_handler(handler))
+        with pytest.raises(RuntimeError, match="Destination directory does not exist"):
+            await client.pdf_merge([1, 2], download_to="/no/such/dir/x.pdf")
+
+    @pytest.mark.asyncio
+    async def test_extract_download_to_missing_dir_raises_without_calling_api(
+        self, monkeypatch
+    ):
+        async def handler(request):
+            raise AssertionError("no HTTP request should be made")
+        monkeypatch.setattr(client, "_make_client", _client_with_handler(handler))
+        with pytest.raises(RuntimeError, match="Destination directory does not exist"):
+            await client.pdf_extract(1, "1", download_to="/no/such/dir/x.pdf")
+
+    @pytest.mark.asyncio
+    async def test_delete_pages_download_to_missing_dir_raises_without_calling_api(
+        self, monkeypatch
+    ):
+        async def handler(request):
+            raise AssertionError("no HTTP request should be made")
+        monkeypatch.setattr(client, "_make_client", _client_with_handler(handler))
+        with pytest.raises(RuntimeError, match="Destination directory does not exist"):
+            await client.pdf_delete_pages(1, "1", download_to="/no/such/dir/x.pdf")
+
+    @pytest.mark.asyncio
+    async def test_split_download_dir_missing_raises_without_calling_api(
+        self, monkeypatch
+    ):
+        async def handler(request):
+            raise AssertionError("no HTTP request should be made")
+        monkeypatch.setattr(client, "_make_client", _client_with_handler(handler))
+        with pytest.raises(RuntimeError, match="Destination directory does not exist"):
+            await client.pdf_split(1, "1,2", download_dir="/no/such/dir")
+
+    def test_parse_page_ranges_without_count(self):
+        assert client.parse_page_ranges("1-3,5") == [[1, 2, 3], [5]]
+        with pytest.raises(ValueError):
+            client.parse_page_ranges("abc")
+
+    @pytest.mark.asyncio
+    async def test_split_bad_range_raises_without_calling_api(self, monkeypatch):
+        async def handler(request):
+            raise AssertionError("no HTTP request should be made")
+        monkeypatch.setattr(client, "_make_client", _client_with_handler(handler))
+        with pytest.raises(RuntimeError, match="Invalid page range"):
+            await client.pdf_split(1, "not-a-range")
+
+    @pytest.mark.asyncio
+    async def test_extract_bad_range_raises_without_calling_api(self, monkeypatch):
+        async def handler(request):
+            raise AssertionError("no HTTP request should be made")
+        monkeypatch.setattr(client, "_make_client", _client_with_handler(handler))
+        with pytest.raises(RuntimeError, match="Invalid page range"):
+            await client.pdf_extract(1, "abc")
+
+    @pytest.mark.asyncio
+    async def test_split_open_ended_range_reaches_the_server(self, monkeypatch):
+        seen = {}
+        async def handler(request):
+            seen["path"] = request.url.path
+            return httpx.Response(200, json=[{"id": 7}, {"id": 8}])
+        monkeypatch.setattr(client, "_make_client", _client_with_handler(handler))
+        result = await client.pdf_split(1, "1-3,4-")
+        assert seen["path"] == "/pdf/split"
+        assert result == [{"id": 7}, {"id": 8}]
+
+    @pytest.mark.asyncio
+    async def test_extract_open_ended_range_reaches_the_server(self, monkeypatch):
+        seen = {}
+        async def handler(request):
+            seen["path"] = request.url.path
+            return httpx.Response(200, json={"id": 9})
+        monkeypatch.setattr(client, "_make_client", _client_with_handler(handler))
+        result = await client.pdf_extract(1, "8-")
+        assert seen["path"] == "/pdf/extract"
+        assert result == {"id": 9}
+
+    def test_client_and_pdf_ops_page_range_parsers_agree(self):
+        from backend import pdf_ops
+
+        for spec in ["1", "2-4", "1-2,4", "3-"]:
+            for n in [5, 10]:
+                assert client.parse_page_ranges(spec, n) == pdf_ops.parse_page_ranges(spec, n)
+        for bad in ["", "0", "abc", "3-1"]:
+            with pytest.raises(ValueError):
+                client.parse_page_ranges(bad, 5)
+            with pytest.raises(ValueError):
+                pdf_ops.parse_page_ranges(bad, 5)
+        # Open-ended token: valid syntax, no count needed in this mode.
+        assert client.parse_page_ranges("1-3,4-", allow_open_ended=True) == [[1, 2, 3], [4]]
 
 
 class TestValidCategories:

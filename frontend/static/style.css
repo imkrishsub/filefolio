@@ -901,7 +901,8 @@ body.dark-mode .icon-btn .sun-icon {
 }
 
 .actions-cell {
-    width: 100px;
+    width: 140px;
+    white-space: nowrap;
     text-align: center;
 }
 
@@ -911,6 +912,7 @@ body.dark-mode .icon-btn .sun-icon {
     padding: 0;
     gap: 0.5rem;
     display: inline-flex;
+    flex-wrap: nowrap;
 }
 
 /* Modal */
@@ -1269,6 +1271,75 @@ body.dark-mode .icon-btn .sun-icon {
     animation: spin 0.6s linear infinite;
 }
 
+/* Stack the merge FAB above the download FAB */
+#merge-selected-btn {
+    bottom: calc(2rem + 72px);
+}
+
+/* PDF workbench: per-document Tools menu */
+.tools-menu {
+    position: relative;
+    display: inline-block;
+}
+
+.tools-dropdown {
+    /* Fixed positioning takes the menu out of the card's overflow:hidden
+       (grid view) and the table cell (list view); toggleToolsMenu() sets
+       top/left from the button's viewport rect and flips it upward when
+       there is not enough room below. */
+    position: fixed;
+    top: 0;
+    left: 0;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    box-shadow: var(--shadow-md);
+    z-index: 1500;
+    min-width: 160px;
+    max-height: 240px;
+    overflow-y: auto;
+}
+
+.tools-dropdown button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 8px 12px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font: inherit;
+    color: var(--text-primary);
+}
+
+.tools-dropdown button:hover {
+    background: var(--bg-tertiary);
+}
+
+/* PDF workbench: operation modal */
+.modal-explainer {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+    margin-bottom: 12px;
+}
+
+.checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0;
+}
+
+.form-status {
+    margin-top: 10px;
+    font-size: 0.9em;
+    color: var(--text-secondary);
+}
+
+.form-status--error {
+    color: var(--error-text);
+}
+
 /* Responsive adjustments */
 @media (max-width: 768px) {
     .documents-list {
@@ -1328,6 +1399,10 @@ body.dark-mode .icon-btn .sun-icon {
         width: 56px;
         height: 56px;
         justify-content: center;
+    }
+
+    #merge-selected-btn {
+        bottom: calc(1rem + 68px);
     }
 }
 

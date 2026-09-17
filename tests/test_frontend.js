@@ -345,6 +345,35 @@ function testToolsMenuWiring() {
     console.log('✓ Tools menu wiring tests passed');
 }
 
+function testFormatErrorDetail() {
+    const src = require('fs').readFileSync(
+        __dirname + '/../frontend/static/app.js', 'utf8'
+    );
+    const match = src.match(/function formatErrorDetail\([\s\S]*?\n\}/);
+    console.assert(match !== null, 'app.js should define formatErrorDetail');
+    const formatErrorDetail = new Function(match[0] + '\nreturn formatErrorDetail;')();
+
+    console.assert(formatErrorDetail('Duplicate file', 'Failed') === 'Duplicate file',
+        'string detail should pass through');
+    console.assert(
+        formatErrorDetail([{ loc: ['body', 'document_ids'], msg: 'List should have at least 2 items' }], 'Failed')
+            === 'List should have at least 2 items',
+        'validation error list should show its msg, not [object Object]'
+    );
+    console.assert(formatErrorDetail([{ msg: 'a' }, { msg: 'b' }], 'Failed') === 'a; b',
+        'multiple validation messages should be joined');
+    console.assert(formatErrorDetail(undefined, 'Failed') === 'Failed', 'missing detail should fall back');
+    console.assert(formatErrorDetail({}, 'Failed') === 'Failed', 'object detail should fall back');
+    console.assert(formatErrorDetail([{}], 'Failed') === 'Failed', 'list without msg should fall back');
+
+    console.assert(
+        src.includes("formatErrorDetail(detail.detail, t('pdf.failed'))"),
+        'PDF tool submit handler should format error details'
+    );
+
+    console.log('✓ Error detail formatting tests passed');
+}
+
 // Run all tests
 function runAllTests() {
     console.log('Running FileFolio frontend tests...\n');
@@ -361,6 +390,7 @@ function runAllTests() {
     testDateFormatting();
     testPdfToolConfig();
     testToolsMenuWiring();
+    testFormatErrorDetail();
 
     console.log('\n✓ All frontend tests completed');
 }
@@ -380,6 +410,7 @@ if (typeof module !== 'undefined' && module.exports) {
         testDateFormatting,
         testPdfToolConfig,
         testToolsMenuWiring,
+        testFormatErrorDetail,
         runAllTests
     };
 }

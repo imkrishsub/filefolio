@@ -1477,6 +1477,17 @@ if (restoreFileInput) {
 
 let pdfToolState = { op: null, docId: null };
 
+// FastAPI returns `detail` as a string for HTTPException, but as a list of
+// {loc, msg, ...} objects for request validation errors (422).
+function formatErrorDetail(detail, fallback) {
+    if (typeof detail === 'string' && detail) return detail;
+    if (Array.isArray(detail)) {
+        const msgs = detail.map(d => (d && d.msg) || '').filter(Boolean);
+        if (msgs.length) return msgs.join('; ');
+    }
+    return fallback;
+}
+
 function closeAllToolsMenus() {
     document.querySelectorAll('.tools-dropdown').forEach(d => {
         d.hidden = true;
@@ -1603,7 +1614,7 @@ if (pdfToolForm) {
             });
             if (!resp.ok) {
                 const detail = await resp.json().catch(() => ({}));
-                throw new Error(detail.detail || t('pdf.failed'));
+                throw new Error(formatErrorDetail(detail.detail, t('pdf.failed')));
             }
             const ct = resp.headers.get('content-type') || '';
             if (ct.includes('application/pdf') || ct.includes('application/zip')) {

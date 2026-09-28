@@ -30,7 +30,7 @@ jobs:
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y poppler-utils tesseract-ocr tesseract-ocr-eng tesseract-ocr-deu
+        sudo apt-get install -y poppler-utils tesseract-ocr tesseract-ocr-eng tesseract-ocr-deu ghostscript
 
     - name: Cache pip packages
       uses: actions/cache@v3

@@ -85,7 +85,9 @@ async def filefolio_pdf_merge(document_ids: list[int]) -> dict:
 
 
 @server.tool()
-async def filefolio_pdf_split(document_id: int, ranges: str, dest_dir: Optional[str] = None) -> list:
+async def filefolio_pdf_split(
+    document_id: int, ranges: str, dest_dir: Optional[str] = None
+) -> list:
     """Split one document by page ranges (e.g. "1-3,5,8-").
 
     Files each part as a new document, or writes them to dest_dir if given.
@@ -94,19 +96,25 @@ async def filefolio_pdf_split(document_id: int, ranges: str, dest_dir: Optional[
 
 
 @server.tool()
-async def filefolio_pdf_extract(document_id: int, pages: str, dest_path: Optional[str] = None) -> dict:
+async def filefolio_pdf_extract(
+    document_id: int, pages: str, dest_path: Optional[str] = None
+) -> dict:
     """Keep only the given pages (e.g. "2-4") as a new filed document, or write to dest_path."""
     return await client.pdf_extract(document_id, pages, download_to=dest_path)
 
 
 @server.tool()
-async def filefolio_pdf_delete_pages(document_id: int, pages: str, dest_path: Optional[str] = None) -> dict:
+async def filefolio_pdf_delete_pages(
+    document_id: int, pages: str, dest_path: Optional[str] = None
+) -> dict:
     """Remove the given pages (e.g. "1,7") and file the rest as a new document, or write to dest_path."""
     return await client.pdf_delete_pages(document_id, pages, download_to=dest_path)
 
 
 @server.tool()
-async def filefolio_pdf_rotate(document_id: int, degrees: int, pages: str = "all") -> dict:
+async def filefolio_pdf_rotate(
+    document_id: int, degrees: int, pages: str = "all"
+) -> dict:
     """Rotate pages by 90, 180 or 270 degrees. Edits the document in place; keeps its id and metadata."""
     return await client.pdf_rotate(document_id, degrees, pages)
 

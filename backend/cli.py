@@ -179,8 +179,10 @@ def _cmd_pdf_rotate(args) -> None:
 
 def _cmd_pdf_ocr(args) -> None:
     result = asyncio.run(client.pdf_ocr(args.doc_id))
-    _print_json(result) if args.json else print(
-        f"OCR added to document {result.get('id')}"
+    (
+        _print_json(result)
+        if args.json
+        else print(f"OCR added to document {result.get('id')}")
     )
 
 
@@ -256,9 +258,7 @@ def _build_parser() -> argparse.ArgumentParser:
         p = pdf_sub.add_parser(name, help=help_text)
         p.add_argument("doc_id", type=int, metavar="ID")
         p.add_argument("pages", help='e.g. "2-4"')
-        p.add_argument(
-            "--download", metavar="OUT.pdf", help="save instead of filing"
-        )
+        p.add_argument("--download", metavar="OUT.pdf", help="save instead of filing")
         _add_json_flag(p)
         p.set_defaults(
             func=_cmd_pdf_extract if name == "extract" else _cmd_pdf_delete_pages

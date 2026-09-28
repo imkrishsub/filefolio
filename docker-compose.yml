@@ -2,7 +2,8 @@ services:
   filefolio:
     build: .
     ports:
-      - "8000:8000"
+      # PORT picks the host port; the app always listens on 8000 in the container.
+      - "${PORT:-8000}:8000"
     volumes:
       - ./uploads:/app/uploads
       - ./data:/app/data

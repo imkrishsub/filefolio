@@ -676,14 +676,10 @@ async def upload_pdf(file: UploadFile = File(...)):
 
 def _load_doc_or_404(doc_id: int):
     conn = get_db_connection()
-    row = conn.execute(
-        "SELECT * FROM documents WHERE id = ?", (doc_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
     conn.close()
     if not row:
-        raise HTTPException(
-            status_code=404, detail=f"Document {doc_id} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"Document {doc_id} not found")
     return row
 
 
@@ -704,9 +700,7 @@ class PdfMergeRequest(BaseModel):
 
 @app.post("/pdf/merge")
 async def pdf_merge(request: PdfMergeRequest):
-    sources = [
-        _resolved_pdf_path(_load_doc_or_404(i)) for i in request.document_ids
-    ]
+    sources = [_resolved_pdf_path(_load_doc_or_404(i)) for i in request.document_ids]
 
     staging = storage.staging_dir(UPLOAD_DIR)
     staging.mkdir(parents=True, exist_ok=True)
@@ -865,7 +859,10 @@ def _apply_in_place(row, transform) -> dict:
     source = _resolved_pdf_path(row)
     staging = storage.staging_dir(UPLOAD_DIR)
     staging.mkdir(parents=True, exist_ok=True)
-    new_pdf = staging / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}_{source.name}"
+    new_pdf = (
+        staging
+        / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}_{source.name}"
+    )
     try:
         transform(source, new_pdf)
     except (ValueError, pypdf.errors.PyPdfError) as exc:
@@ -879,26 +876,36 @@ def _apply_in_place(row, transform) -> dict:
     new_preview = _extract_text_for_preview(new_pdf)
 
     try:
-        backup = storage.replace_file(row["file_path"], UPLOAD_DIR, new_pdf, keep_backup=True)
+        backup = storage.replace_file(
+            row["file_path"], UPLOAD_DIR, new_pdf, keep_backup=True
+        )
     except OSError as exc:
         new_pdf.unlink(missing_ok=True)
-        raise HTTPException(status_code=500, detail=f"Could not replace the file: {exc}")
+        raise HTTPException(
+            status_code=500, detail=f"Could not replace the file: {exc}"
+        )
 
     current = storage.resolve(row["file_path"], UPLOAD_DIR)
     try:
         _persist_in_place_update(row["id"], new_hash, new_preview)
     except sqlite3.IntegrityError:
         os.replace(str(backup), str(current))
-        raise HTTPException(status_code=409, detail="Result duplicates another document")
+        raise HTTPException(
+            status_code=409, detail="Result duplicates another document"
+        )
     except Exception as exc:
         os.replace(str(backup), str(current))
-        raise HTTPException(status_code=500, detail=f"Could not update the document: {exc}")
+        raise HTTPException(
+            status_code=500, detail=f"Could not update the document: {exc}"
+        )
     Path(backup).unlink(missing_ok=True)
 
     generate_thumbnail(current, row["stored_filename"])
 
     conn = get_db_connection()
-    updated = conn.execute("SELECT * FROM documents WHERE id = ?", (row["id"],)).fetchone()
+    updated = conn.execute(
+        "SELECT * FROM documents WHERE id = ?", (row["id"],)
+    ).fetchone()
     conn.close()
     return {
         "id": updated["id"],
@@ -924,7 +931,9 @@ async def pdf_rotate(request: PdfRotateRequest):
         if request.pages.strip().lower() == "all":
             targets = None
         else:
-            groups = pdf_ops.parse_page_ranges(request.pages, pdf_ops.page_count(source))
+            groups = pdf_ops.parse_page_ranges(
+                request.pages, pdf_ops.page_count(source)
+            )
             targets = list(dict.fromkeys(n for g in groups for n in g))
         pdf_ops.rotate(source, dest, request.degrees, targets)
 

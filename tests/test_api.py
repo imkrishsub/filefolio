@@ -2506,7 +2506,10 @@ class TestPdfOcr:
         assert "ocrmypdf" in r.json()["detail"]
 
     @pytest.mark.slow
-    @pytest.mark.skipif(shutil.which("ocrmypdf") is None, reason="ocrmypdf not installed")
+    @pytest.mark.skipif(
+        shutil.which("ocrmypdf") is None or shutil.which("gs") is None,
+        reason="ocrmypdf and ghostscript required",
+    )
     def test_ocr_keeps_the_same_document_id(self, client, multipage_pdf_bytes, mock_ollama_response):
         doc = self._upload(client, multipage_pdf_bytes)
         r = client.post("/pdf/ocr", json={"document_id": doc})

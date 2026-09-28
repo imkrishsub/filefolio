@@ -108,7 +108,9 @@ def delete_pages(source: Path, pages: list[int], dest: Path) -> None:
         writer.write(fh)
 
 
-def rotate(source: Path, dest: Path, degrees: int, pages: list[int] | None = None) -> None:
+def rotate(
+    source: Path, dest: Path, degrees: int, pages: list[int] | None = None
+) -> None:
     if degrees not in _ROTATIONS:
         raise ValueError(f"rotation must be one of {_ROTATIONS}")
     reader = PdfReader(str(source))
@@ -134,4 +136,6 @@ def ocr(source: Path, dest: Path) -> None:
         text=True,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"ocrmypdf failed: {result.stderr.strip() or result.stdout.strip()}")
+        raise RuntimeError(
+            f"ocrmypdf failed: {result.stderr.strip() or result.stdout.strip()}"
+        )

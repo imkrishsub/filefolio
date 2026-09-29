@@ -96,6 +96,22 @@ function translateTag(tag) {
     return translated !== categoryKey ? translated : tag;
 }
 
+// Escape a value for HTML text or a double-quoted attribute. Filenames and
+// tags come from LLM output and user edits, so every one that reaches
+// innerHTML must go through this.
+function escapeHtml(value) {
+    const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+    return String(value ?? '').replace(/[&<>"']/g, ch => map[ch]);
+}
+
+function displayName(doc) {
+    return doc.auto_filename || doc.original_filename;
+}
+
+function findDocument(id) {
+    return documentsData.find(d => d.id === id);
+}
+
 // Last /ollama-status payload, kept so the banner can be re-rendered on a
 // language switch without re-hitting the endpoint.
 let ollamaStatus = null;
@@ -255,7 +271,7 @@ async function uploadFile(file) {
     const progressHtml = `
         <div id="${progressId}" class="upload-progress">
             <div class="upload-progress-header">
-                <span class="upload-filename">${file.name}</span>
+                <span class="upload-filename">${escapeHtml(file.name)}</span>
                 <span class="upload-status">${t('upload.uploading')}</span>
             </div>
             <div class="progress-bar">
@@ -575,28 +591,29 @@ function renderDocuments() {
 
 // Create document card HTML
 function createDocumentCard(doc) {
-    const tags = doc.tags.map(tag => `<span class="tag">${translateTag(tag)}</span>`).join('');
+    const tags = doc.tags.map(tag => `<span class="tag">${escapeHtml(translateTag(tag))}</span>`).join('');
     const thumbnailUrl = doc.thumbnail || '/static/placeholder.png';
     const isSelected = selectedDocuments.has(doc.id);
     const translatedCategory = translateCategory(doc.category);
+    const name = escapeHtml(displayName(doc));
 
     return `
         <div class="document-card ${isSelected ? 'selected' : ''}" data-doc-id="${doc.id}">
             <div class="document-checkbox">
                 <input type="checkbox" class="doc-checkbox" data-doc-id="${doc.id}" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation(); toggleDocumentSelection(${doc.id})">
             </div>
-            <img src="${thumbnailUrl}" alt="${doc.auto_filename || doc.original_filename}" class="document-thumbnail loading" onclick="previewDocument(${doc.id}, '${(doc.auto_filename || doc.original_filename).replace(/'/g, "\\'")}')" style="cursor: pointer;" onerror="this.src='/static/placeholder.png'; this.classList.remove('loading'); this.classList.add('loaded');" onload="this.classList.remove('loading'); this.classList.add('loaded');">
-            <div class="document-content" onclick="previewDocument(${doc.id}, '${(doc.auto_filename || doc.original_filename).replace(/'/g, "\\'")}')" style="cursor: pointer;">
+            <img src="${escapeHtml(thumbnailUrl)}" alt="${name}" class="document-thumbnail loading" onclick="previewDocument(${doc.id})" style="cursor: pointer;" onerror="this.src='/static/placeholder.png'; this.classList.remove('loading'); this.classList.add('loaded');" onload="this.classList.remove('loading'); this.classList.add('loaded');">
+            <div class="document-content" onclick="previewDocument(${doc.id})" style="cursor: pointer;">
                 <div class="document-header">
                     <div class="document-title">
-                        <h3>${doc.auto_filename || doc.original_filename}</h3>
+                        <h3>${name}</h3>
                     </div>
-                    <span class="document-category">${translatedCategory}</span>
+                    <span class="document-category">${escapeHtml(translatedCategory)}</span>
                 </div>
                 ${tags ? `<div class="document-tags">${tags}</div>` : ''}
             </div>
             <div class="document-actions">
-                <button class="btn-icon" onclick="event.stopPropagation(); editDocument(${doc.id}, '${(doc.auto_filename || doc.original_filename).replace(/'/g, "\\'")}', '${doc.category}', ${JSON.stringify(doc.tags).replace(/"/g, '&quot;')})" title="Edit document">
+                <button class="btn-icon" onclick="event.stopPropagation(); editDocument(${doc.id})" title="Edit document">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
@@ -614,7 +631,7 @@ function createDocumentCard(doc) {
                         <button onclick="event.stopPropagation(); openPdfTool('ocr', ${doc.id})">${t('pdf.ocr')}</button>
                     </div>
                 </div>
-                <button class="btn-icon btn-delete" onclick="event.stopPropagation(); deleteDocument(${doc.id}, '${(doc.auto_filename || doc.original_filename).replace(/'/g, "\\'")}')" title="Delete document">
+                <button class="btn-icon btn-delete" onclick="event.stopPropagation(); deleteDocument(${doc.id})" title="Delete document">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="3 6 5 6 21 6"></polyline>
                         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -627,8 +644,8 @@ function createDocumentCard(doc) {
 
 // Create document table row HTML
 function createDocumentRow(doc) {
-    const tags = doc.tags.map(tag => `<span class="tag">${translateTag(tag)}</span>`).join('');
-    const displayFilename = doc.auto_filename || doc.original_filename;
+    const tags = doc.tags.map(tag => `<span class="tag">${escapeHtml(translateTag(tag))}</span>`).join('');
+    const name = escapeHtml(displayName(doc));
     const uploadDate = new Date(doc.upload_date).toLocaleDateString('en-US', {
         year: 'numeric',
         month: 'short',
@@ -642,19 +659,19 @@ function createDocumentRow(doc) {
             <td style="text-align: center;">
                 <input type="checkbox" class="doc-checkbox" data-doc-id="${doc.id}" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation(); toggleDocumentSelection(${doc.id})">
             </td>
-            <td class="filename-cell" onclick="previewDocument(${doc.id}, '${displayFilename.replace(/'/g, "\\'")}')" style="cursor: pointer;">
-                <span class="filename-link">${displayFilename}</span>
+            <td class="filename-cell" onclick="previewDocument(${doc.id})" style="cursor: pointer;">
+                <span class="filename-link">${name}</span>
             </td>
-            <td onclick="previewDocument(${doc.id}, '${displayFilename.replace(/'/g, "\\'")}')" style="cursor: pointer;">
-                <span class="document-category">${translatedCategory}</span>
+            <td onclick="previewDocument(${doc.id})" style="cursor: pointer;">
+                <span class="document-category">${escapeHtml(translatedCategory)}</span>
             </td>
-            <td class="tags-cell" onclick="previewDocument(${doc.id}, '${displayFilename.replace(/'/g, "\\'")}')" style="cursor: pointer;">
+            <td class="tags-cell" onclick="previewDocument(${doc.id})" style="cursor: pointer;">
                 ${tags}
             </td>
-            <td onclick="previewDocument(${doc.id}, '${displayFilename.replace(/'/g, "\\'")}')" style="cursor: pointer;">${uploadDate}</td>
+            <td onclick="previewDocument(${doc.id})" style="cursor: pointer;">${uploadDate}</td>
             <td class="actions-cell">
                 <div class="document-actions">
-                <button class="btn-icon" onclick="editDocument(${doc.id}, '${displayFilename.replace(/'/g, "\\'")}', '${doc.category}', ${JSON.stringify(doc.tags).replace(/"/g, '&quot;')})" title="Edit document">
+                <button class="btn-icon" onclick="editDocument(${doc.id})" title="Edit document">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
@@ -672,7 +689,7 @@ function createDocumentRow(doc) {
                         <button onclick="event.stopPropagation(); openPdfTool('ocr', ${doc.id})">${t('pdf.ocr')}</button>
                     </div>
                 </div>
-                <button class="btn-icon btn-delete" onclick="deleteDocument(${doc.id}, '${displayFilename.replace(/'/g, "\\'")}')" title="Delete document">
+                <button class="btn-icon btn-delete" onclick="deleteDocument(${doc.id})" title="Delete document">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="3 6 5 6 21 6"></polyline>
                         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -685,13 +702,15 @@ function createDocumentRow(doc) {
 }
 
 // Preview document in modal
-function previewDocument(id, filename) {
+function previewDocument(id) {
+    const doc = findDocument(id);
+    if (!doc) return;
     currentPreviewDocId = id;
     const modal = document.getElementById('preview-modal');
     const iframe = document.getElementById('pdf-viewer');
     const title = document.getElementById('preview-title');
 
-    title.textContent = filename;
+    title.textContent = displayName(doc);
     iframe.src = `/document/${id}`;
     modal.style.display = 'flex';
 }
@@ -725,17 +744,19 @@ function viewDocument(id) {
 }
 
 // Edit document
-function editDocument(id, filename, category, tags) {
+function editDocument(id) {
+    const doc = findDocument(id);
+    if (!doc) return;
     const modal = document.getElementById('edit-modal');
     const form = document.getElementById('edit-form');
 
     // Populate form
     document.getElementById('edit-doc-id').value = id;
-    document.getElementById('edit-filename').value = filename;
-    document.getElementById('edit-category').value = category;
+    document.getElementById('edit-filename').value = displayName(doc);
+    document.getElementById('edit-category').value = doc.category;
 
     // Set up tags
-    selectedTags = Array.isArray(tags) ? [...tags] : [];
+    selectedTags = Array.isArray(doc.tags) ? [...doc.tags] : [];
     renderSelectedTags();
     setupTagInput();
 
@@ -774,7 +795,7 @@ function setupTagInput() {
 
         if (matches.length > 0) {
             suggestionsDiv.innerHTML = matches.map(tag =>
-                `<div class="tag-suggestion" data-tag="${tag}">${tag}</div>`
+                `<div class="tag-suggestion" data-tag="${escapeHtml(tag)}">${escapeHtml(tag)}</div>`
             ).join('');
             suggestionsDiv.style.display = 'block';
 
@@ -837,8 +858,8 @@ function renderSelectedTags() {
     const container = document.getElementById('selected-tags');
     container.innerHTML = selectedTags.map(tag =>
         `<span class="tag-pill">
-            ${tag}
-            <button type="button" class="tag-remove" data-tag="${tag}">&times;</button>
+            ${escapeHtml(tag)}
+            <button type="button" class="tag-remove" data-tag="${escapeHtml(tag)}">&times;</button>
         </span>`
     ).join('');
 
@@ -899,8 +920,10 @@ async function saveDocumentChanges() {
 }
 
 // Delete document
-async function deleteDocument(id, filename) {
-    if (!confirm(t('confirm.delete', { filename }))) {
+async function deleteDocument(id) {
+    const doc = findDocument(id);
+    if (!doc) return;
+    if (!confirm(t('confirm.delete', { filename: displayName(doc) }))) {
         return;
     }
 
@@ -1205,7 +1228,7 @@ async function loadSyncFolders() {
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
                         </svg>
-                        <span>${folder.source_path}</span>
+                        <span>${escapeHtml(folder.source_path)}</span>
                     </div>
                     <div class="folder-status">
                         <span class="status-badge ${folder.is_watching ? 'watching' : 'paused'}">

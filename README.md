@@ -298,12 +298,15 @@ response is the error for the failing part.
 
 ### OCR dependencies
 
-Make searchable / `filefolio pdf ocr` needs `ocrmypdf`, `ghostscript`, and
-`unpaper` on PATH. The Docker image bundles them.
+Make searchable / `filefolio pdf ocr` uses `ocrmypdf`, which `requirements.txt`
+installs into the virtual environment. FileFolio runs it with its own Python
+interpreter, so the virtual environment does not have to be activated. It also
+needs Tesseract (see [Prerequisites](#prerequisites)) and Ghostscript on PATH.
+The Docker image bundles them.
 
-- macOS: `brew install ocrmypdf`
-- Debian/Ubuntu: `apt install ocrmypdf`
-- Windows: `pip install ocrmypdf` plus the Ghostscript installer
+- macOS: `brew install ghostscript`
+- Debian/Ubuntu: `apt-get install ghostscript`
+- Windows: install Ghostscript from [ghostscript.com](https://ghostscript.com/releases/gsdnld.html)
 
 ## Project structure
 

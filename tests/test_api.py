@@ -3,6 +3,7 @@ Tests for FileFolio API endpoints.
 Updated to match actual API implementation.
 """
 
+import importlib.util
 import io
 import json
 import shutil
@@ -2507,7 +2508,7 @@ class TestPdfOcr:
 
     @pytest.mark.slow
     @pytest.mark.skipif(
-        shutil.which("ocrmypdf") is None or shutil.which("gs") is None,
+        importlib.util.find_spec("ocrmypdf") is None or shutil.which("gs") is None,
         reason="ocrmypdf and ghostscript required",
     )
     def test_ocr_keeps_the_same_document_id(self, client, multipage_pdf_bytes, mock_ollama_response):

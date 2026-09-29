@@ -38,7 +38,10 @@ Paperless-ngx is the most popular self-hosted alternative. Here's how they compa
 
 ## Prerequisites
 
+- Git
 - Python 3.10+
+  - Ubuntu/Debian: `apt-get install git python3-venv` (Python there ships without `venv`
+    and `pip`, so step 2 of the manual setup fails without it)
 - [Ollama](https://ollama.ai) installed locally, with a model pulled:
   ```bash
   ollama pull llama3.2

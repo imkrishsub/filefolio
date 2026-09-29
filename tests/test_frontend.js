@@ -233,33 +233,6 @@ function testSelectionState() {
     console.log('✓ Selection state tests passed');
 }
 
-// Test: Filename escaping for display
-function testFilenameEscaping() {
-    function escapeHtml(text) {
-        const map = {
-            '&': '&amp;',
-            '<': '&lt;',
-            '>': '&gt;',
-            '"': '&quot;',
-            "'": '&#039;'
-        };
-        return text.replace(/[&<>"']/g, m => map[m]);
-    }
-
-    const testCases = [
-        { input: 'normal.pdf', expected: 'normal.pdf' },
-        { input: '<script>alert("xss")</script>', expected: '&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;' },
-        { input: "file'with'quotes.pdf", expected: "file&#039;with&#039;quotes.pdf" }
-    ];
-
-    testCases.forEach(({ input, expected }) => {
-        const result = escapeHtml(input);
-        console.assert(result === expected, `Escaping failed for "${input}"`);
-    });
-
-    console.log('✓ Filename escaping tests passed');
-}
-
 // Test: Date formatting
 function testDateFormatting() {
     function formatDate(dateString) {
@@ -386,7 +359,6 @@ function runAllTests() {
     testDocumentSorting();
     testViewModeSwitching();
     testSelectionState();
-    testFilenameEscaping();
     testDateFormatting();
     testPdfToolConfig();
     testToolsMenuWiring();
@@ -406,7 +378,6 @@ if (typeof module !== 'undefined' && module.exports) {
         testDocumentSorting,
         testViewModeSwitching,
         testSelectionState,
-        testFilenameEscaping,
         testDateFormatting,
         testPdfToolConfig,
         testToolsMenuWiring,

@@ -113,6 +113,38 @@ class TestThumbnailGeneration:
 
         assert url == f"/thumbnails/{expected}", f"Unexpected URL: {url}"
 
+    @pytest.mark.parametrize("mode", ["L", "RGB"])
+    @pytest.mark.parametrize("quality", [75, 85, 95])
+    def test_pillow_writes_uncorrupted_jpegs(self, mode, quality):
+        """Pillow's JPEG encoder must produce data a strict decoder accepts.
+
+        Pillow 10.1.0 bundled libjpeg-turbo 3.0.0, which wrote corrupt JPEGs
+        for text pages ("premature end of data segment"). Browsers still showed
+        the thumbnails, but qpdf rejects such images, so OCR of scanned PDFs
+        built with Pillow failed. qpdf (via pikepdf) is used as the strict
+        decoder because libjpeg warnings are fatal there.
+        """
+        from PIL import ImageDraw, ImageFont
+
+        pikepdf = pytest.importorskip("pikepdf")
+
+        img = Image.new("RGB", (1654, 2338), "white")
+        draw = ImageDraw.Draw(img)
+        font = ImageFont.load_default(size=33)
+        for i in range(18):
+            draw.text((100, 100 + i * 50), "Invoice 4711 total 1,234.56 EUR", fill="black", font=font)
+        jpeg = io.BytesIO()
+        img.convert(mode).save(jpeg, "JPEG", quality=quality)
+
+        # Saving a JPEG image as PDF embeds the JPEG bytes unchanged (DCTDecode).
+        pdf_bytes = io.BytesIO()
+        Image.open(jpeg).save(pdf_bytes, "PDF")
+        pdf_bytes.seek(0)
+        with pikepdf.open(pdf_bytes) as pdf:
+            (image,) = pdf.pages[0].get_images().values()
+            assert image.Filter == "/DCTDecode"
+            image.read_bytes(decode_level=pikepdf.StreamDecodeLevel.all)
+
     def test_thumbnail_resize(self, sample_image):
         """Test resizing thumbnail to standard size."""
         img = Image.open(io.BytesIO(sample_image))

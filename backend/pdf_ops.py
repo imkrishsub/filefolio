@@ -7,8 +7,9 @@ Callers (backend/main.py) own staging, atomic moves, and re-ingestion.
 
 from __future__ import annotations
 
-import shutil
+import importlib.util
 import subprocess
+import sys
 from pathlib import Path
 
 from pypdf import PdfReader, PdfWriter
@@ -125,13 +126,26 @@ def rotate(
 
 
 def ocr(source: Path, dest: Path) -> None:
-    """Embed a searchable text layer with ocrmypdf. No-op on pages already text."""
-    if shutil.which("ocrmypdf") is None:
+    """Embed a searchable text layer with ocrmypdf. No-op on pages already text.
+
+    Runs ocrmypdf as a module of the current interpreter, so it works even when
+    the virtual environment's scripts directory is not on PATH (for example
+    when the server is started as `venv/bin/python backend/main.py`).
+    """
+    if importlib.util.find_spec("ocrmypdf") is None:
         raise RuntimeError(
             "ocrmypdf is not installed. Install it (and ghostscript) to use OCR."
         )
     result = subprocess.run(
-        ["ocrmypdf", "--skip-text", "--quiet", str(source), str(dest)],
+        [
+            sys.executable,
+            "-m",
+            "ocrmypdf",
+            "--skip-text",
+            "--quiet",
+            str(source),
+            str(dest),
+        ],
         capture_output=True,
         text=True,
     )

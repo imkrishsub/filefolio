@@ -1,6 +1,9 @@
 """Unit tests for backend.pdf_ops — pure PDF operations, no HTTP, no DB."""
 
+import importlib.util
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -86,6 +89,29 @@ class TestRotate:
 
 class TestOcr:
     def test_raises_runtimeerror_when_ocrmypdf_missing(self, tmp_path, sample_pdf_file, monkeypatch):
+        real_find_spec = importlib.util.find_spec
+        monkeypatch.setattr(
+            importlib.util, "find_spec", lambda name, *a: None if name == "ocrmypdf" else real_find_spec(name, *a)
+        )
+        with pytest.raises(RuntimeError, match="ocrmypdf is not installed"):
+            pdf_ops.ocr(sample_pdf_file, tmp_path / "o.pdf")
+
+    def test_runs_ocrmypdf_with_current_interpreter_not_path(self, tmp_path, sample_pdf_file, monkeypatch):
+        """A server started without activating the venv has no ocrmypdf script on PATH."""
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append(args)
+            return subprocess.CompletedProcess(args, 0, "", "")
+
         monkeypatch.setattr(shutil, "which", lambda name: None)
-        with pytest.raises(RuntimeError):
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        pdf_ops.ocr(sample_pdf_file, tmp_path / "o.pdf")
+        assert calls[0][:3] == [sys.executable, "-m", "ocrmypdf"]
+
+    def test_reports_ocrmypdf_failure(self, tmp_path, sample_pdf_file, monkeypatch):
+        monkeypatch.setattr(
+            subprocess, "run", lambda args, **kwargs: subprocess.CompletedProcess(args, 4, "", "output is INVALID")
+        )
+        with pytest.raises(RuntimeError, match="ocrmypdf failed: output is INVALID"):
             pdf_ops.ocr(sample_pdf_file, tmp_path / "o.pdf")

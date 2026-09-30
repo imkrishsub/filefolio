@@ -339,7 +339,10 @@ filefolio/
 
 1. **Upload** - Drag and drop a PDF file into the web interface, or sync a local folder to automatically import new files
 2. **Extract** - Text is extracted from the PDF (with OCR fallback for scanned documents)
-3. **Analyze** - A local LLM analyzes the content to determine category, tags, and suggest a filename
+3. **Analyze** - A local LLM analyzes the content to determine category, tags, and suggest a filename.
+   Suggested names follow one pattern: issuer, document type, and the month the document was
+   issued, e.g. `stadtwerke-musterstadt-electricity-bill-september-2026.pdf`. Invoice numbers,
+   amounts and other identifiers are left out
 4. **Organize** - The document is saved with metadata in a local SQLite database.
    The file on disk keeps its original name; the suggested name is stored alongside it
    and is what you see in the interface, so nothing is lost if a suggestion is wrong.

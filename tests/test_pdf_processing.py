@@ -285,7 +285,65 @@ class TestSanitizeAutoFilename:
         assert self.sanitize("C:\\Users\\bob\\rent-statement", "x.pdf") == "rent-statement.pdf"
 
     def test_strips_model_supplied_extension(self):
-        assert self.sanitize("acme-invoice-may-2026.pdf", "x.pdf") == "acme-invoice-may-2026.pdf"
+        assert self.sanitize("acme-invoice.pdf", "x.pdf") == "acme-invoice.pdf"
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            # Date suffixes llama3.2 produced in the 2026-09 QC runs (T034).
+            ("acme-invoice-202609", "acme-invoice.pdf"),
+            ("acme-invoice-sept-2026", "acme-invoice.pdf"),
+            ("acme-invoice-september-2026", "acme-invoice.pdf"),
+            ("acme-invoice-09-2026", "acme-invoice.pdf"),
+            ("acme-invoice-0926", "acme-invoice.pdf"),
+            ("acme-invoice-0917-2026", "acme-invoice.pdf"),
+            # Invoice numbers and amounts.
+            ("musterstadt-gmbh-electricity-bill-0917-4411", "musterstadt-gmbh-electricity-bill.pdf"),
+            ("urban-fitness-membership-290-eur", "urban-fitness-membership.pdf"),
+        ],
+    )
+    def test_removes_model_typed_dates_amounts_and_ids(self, raw, expected):
+        assert self.sanitize(raw, "x.pdf") == expected
+
+    @pytest.mark.parametrize("raw", ["1-1-internet-bill", "o2-phone-bill", "3m-invoice"])
+    def test_keeps_issuer_names_with_single_digits(self, raw):
+        assert self.sanitize(raw, "x.pdf") == f"{raw}.pdf"
+
+    def test_keeps_a_lone_month_word(self):
+        assert self.sanitize("may", "x.pdf") == "may.pdf"
+
+    def test_numbers_only_returns_none(self):
+        assert self.sanitize("0917-4411", "x.pdf") is None
+
+    @pytest.mark.parametrize("date", ["2026-09", "2026-9", "2026-09-17", " 2026-09 "])
+    def test_document_date_becomes_month_year_suffix(self, date):
+        assert self.sanitize("acme-invoice", "x.pdf", date) == "acme-invoice-september-2026.pdf"
+
+    def test_document_date_replaces_a_model_typed_date(self):
+        assert (
+            self.sanitize("acme-invoice-sept-2026", "x.pdf", "2026-09")
+            == "acme-invoice-september-2026.pdf"
+        )
+
+    @pytest.mark.parametrize(
+        "date", [None, "", "null", "unknown", "September 2026", "2026-13", "2026-00", "1850-01", "2999-01", 202609]
+    )
+    def test_unusable_or_future_document_date_adds_nothing(self, date):
+        assert self.sanitize("acme-invoice", "x.pdf", date) == "acme-invoice.pdf"
+
+    def test_future_month_is_rejected_relative_to_today(self):
+        from datetime import datetime
+
+        from backend.main import _document_date_suffix
+
+        today = datetime(2026, 9, 28)
+        assert _document_date_suffix("2026-09", today) == "-september-2026"
+        assert _document_date_suffix("2026-10", today) == ""
+
+    def test_long_name_keeps_its_date_suffix(self):
+        result = self.sanitize("word-" * 30, "x.pdf", "2026-09")
+        assert result.endswith("-september-2026.pdf")
+        assert len(result[: -len(".pdf")]) <= 60
 
     def test_underscores_and_spaces_become_single_hyphen(self):
         assert self.sanitize("acme_corp   tax  notice", "x.pdf") == "acme-corp-tax-notice.pdf"
@@ -317,21 +375,22 @@ class TestSanitizeAutoFilename:
 class TestFilenamePromptConstraints:
     """The filename section of the Ollama prompt must carry the T029 guardrails."""
 
-    def _run(self, monkeypatch, model_filename="summit-fitness-membership"):
+    def _run(self, monkeypatch, model_filename="summit-fitness-membership", document_date=None):
+        import json
+
         from backend import main
 
         captured = {}
 
         def fake_chat(model, messages):
             captured["prompt"] = messages[0]["content"]
-            return {
-                "message": {
-                    "content": (
-                        '{"category": "Other", "tags": ["gym", "membership"], '
-                        f'"filename": "{model_filename}"}}'
-                    )
-                }
+            reply = {
+                "category": "Other",
+                "tags": ["gym", "membership"],
+                "filename": model_filename,
+                "document_date": document_date,
             }
+            return {"message": {"content": json.dumps(reply)}}
 
         monkeypatch.setattr(main, "get_existing_tags", lambda: [])
         monkeypatch.setattr(main.ollama, "chat", fake_chat)
@@ -345,16 +404,26 @@ class TestFilenamePromptConstraints:
         assert "account, member, customer, policy, reference or invoice number" in prompt
         assert "prefer the organisation name over any such identifier" in prompt
 
-    def test_prompt_makes_the_date_optional_and_forbids_guessing(self, monkeypatch):
+    def test_prompt_keeps_numbers_and_dates_out_of_the_filename(self, monkeypatch):
         prompt, _ = self._run(monkeypatch)
-        assert "optionally followed by -month-year" in prompt
-        assert "If you are unsure of the date, omit it entirely" in prompt
-        assert "than guess or infer one" in prompt
-        assert "in the future - is NOT the\n     document's date" in prompt
+        assert "Follow this shape exactly: issuer-document-type" in prompt
+        assert "NO numbers, dates, months, years, amounts or currencies anywhere" in prompt
+        assert "EVERY word separated by a hyphen" in prompt
+
+    def test_prompt_asks_for_a_separate_optional_document_date(self, monkeypatch):
+        prompt, _ = self._run(monkeypatch)
+        assert "A document_date - the month the document was issued or dated, as YYYY-MM" in prompt
+        assert "If you are\n   unsure of the date, use null rather than guess or infer one" in prompt
+        assert "especially one in the future - is NOT the document's date" in prompt
+        assert '"document_date": "YYYY-MM or null"' in prompt
 
     def test_model_supplied_filename_passes_through(self, monkeypatch):
         _, auto_filename = self._run(monkeypatch)
         assert auto_filename == "summit-fitness-membership.pdf"
+
+    def test_document_date_is_appended_in_one_format(self, monkeypatch):
+        _, auto_filename = self._run(monkeypatch, "summit-fitness-membership-09-2026", "2026-09")
+        assert auto_filename == "summit-fitness-membership-september-2026.pdf"
 
 
 class TestDatabaseFTSIntegration:

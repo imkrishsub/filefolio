@@ -1004,12 +1004,78 @@ def get_existing_tags():
     return list(all_tags)
 
 
-def _sanitize_auto_filename(raw, original_filename: str = "") -> Optional[str]:
+_MONTH_NAMES = (
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+)
+
+# Words a model tends to leave at the end of a name when it slips a date or an
+# amount in anyway ("-sept-2026", "-290-eur"). Once the numbers are gone they
+# carry no meaning on their own.
+_TRAILING_NOISE = set(_MONTH_NAMES) | {
+    "jan",
+    "feb",
+    "mar",
+    "apr",
+    "jun",
+    "jul",
+    "aug",
+    "sep",
+    "sept",
+    "oct",
+    "nov",
+    "dec",
+    "eur",
+    "euro",
+    "euros",
+    "usd",
+    "gbp",
+    "chf",
+}
+
+
+def _document_date_suffix(value, today: Optional[datetime] = None) -> str:
+    """Return "-<month>-<year>" for a model-supplied YYYY-MM date, else "".
+
+    The date comes from its own JSON field so the name always uses one format,
+    whatever the model would have typed. Dates in the future are dropped: they
+    are start or due dates, not the date the document was issued.
+    """
+    if not isinstance(value, str):
+        return ""
+    match = re.fullmatch(r"\s*(\d{4})-(\d{1,2})(?:-\d{1,2})?\s*", value)
+    if not match:
+        return ""
+    year, month = int(match.group(1)), int(match.group(2))
+    today = today or datetime.now()
+    if not 1 <= month <= 12 or year < 1900 or (year, month) > (today.year, today.month):
+        return ""
+    return f"-{_MONTH_NAMES[month - 1]}-{year}"
+
+
+def _sanitize_auto_filename(
+    raw, original_filename: str = "", document_date=None
+) -> Optional[str]:
     """Turn a model-suggested name into a safe, storable filename.
 
-    The model is asked for a bare descriptive stem, but it is free-form text:
-    it may come back with directory separators, a path, an extension, quotes,
-    or nothing usable at all. Everything here is defensive.
+    The model is asked for a bare issuer-document-type stem, but it is
+    free-form text: it may come back with directory separators, a path, an
+    extension, quotes, dates, amounts, invoice numbers, or nothing usable at
+    all. Everything here is defensive.
+
+    Numbers of two or more digits are removed (dates, amounts, identifiers),
+    and the date suffix is rebuilt from ``document_date`` in a single format:
+    ``-september-2026``.
 
     Returns None when nothing usable survives, which leaves auto_filename NULL
     and the UI falls back to the original filename.
@@ -1030,23 +1096,32 @@ def _sanitize_auto_filename(raw, original_filename: str = "") -> Optional[str]:
     # in URLs across three operating systems.
     stem = stem.lower().replace("_", "-")
     stem = re.sub(r"[^a-z0-9-]+", "-", stem)
-    stem = re.sub(r"-{2,}", "-", stem).strip("-")
+    # Drop dates, amounts and identifiers such as invoice numbers. Single digits
+    # stay so names like "1-1" (1&1) or "o2" survive.
+    words = [w for w in stem.split("-") if w and not re.fullmatch(r"\d{2,}", w)]
+    while len(words) > 1 and words[-1] in _TRAILING_NOISE:
+        words.pop()
+    stem = "-".join(words)
 
     if not stem or not re.search(r"[a-z0-9]", stem):
         return None
 
+    suffix = _document_date_suffix(document_date)
+
     # Long names break layouts and hit path limits; 60 chars is generous for a
-    # descriptive stem. Trim on a word boundary where one is close by.
-    if len(stem) > 60:
-        stem = stem[:60].rstrip("-")
-        if "-" in stem[40:]:
+    # descriptive name. Trim on a word boundary where one is close by.
+    limit = 60 - len(suffix)
+    if len(stem) > limit:
+        stem = stem[:limit].rstrip("-")
+        near_end = limit - 20
+        if "-" in stem[near_end:]:
             stem = stem[: stem.rindex("-")]
 
     ext = Path(original_filename).suffix.lower() or ".pdf"
     if not re.fullmatch(r"\.[a-z0-9]{1,5}", ext):
         ext = ".pdf"
 
-    return f"{stem}{ext}"
+    return f"{stem}{suffix}{ext}"
 
 
 def process_document(text: str, filename: str):
@@ -1154,19 +1229,21 @@ Provide:
    Invoice, Receipt, Contract, Letter, Report, Form, Statement, Legal, Medical, Tax, Insurance, Other
 2. Relevant tags (3-5 SPECIFIC English keywords that describe what the document is about, NOT generic category names)
 3. A filename - a short descriptive name for this document, in English
-   - Follow this shape: issuer-document-type, optionally followed by -month-year
-   - The issuer is the organisation, company or sender name. Take it from THIS
-     document's text only
+   - Follow this shape exactly: issuer-document-type
+   - The issuer is the organisation, company or sender name, in full. Take it
+     from THIS document's text only
    - NEVER use an account, member, customer, policy, reference or invoice number
      as the issuer - always prefer the organisation name over any such identifier
+   - NO numbers, dates, months, years, amounts or currencies anywhere in the
+     filename - the date goes in "document_date" instead
    - Do NOT copy any organisation name from these instructions
    - Do NOT reuse words from the original filename such as "scan", "document" or "untitled"
-   - Lowercase, words separated by hyphens, 3-6 words
-   - Append -month-year ONLY if the document is dated that month. A start,
-     effective or valid-from date - especially one in the future - is NOT the
-     document's date. If you are unsure of the date, omit it entirely rather
-     than guess or infer one
+   - Lowercase, EVERY word separated by a hyphen, 2-5 words
    - NO file extension, NO directory path, NO spaces or underscores
+4. A document_date - the month the document was issued or dated, as YYYY-MM
+   (e.g. "2026-09"), or null. A start, effective, valid-from or due date -
+   especially one in the future - is NOT the document's date. If you are
+   unsure of the date, use null rather than guess or infer one
 
 Document excerpt:
 {text[:1000]}
@@ -1177,7 +1254,8 @@ Respond in JSON format:
 {{
   "category": "category name",
   "tags": ["specific_tag1", "specific_tag2", "specific_tag3"],
-  "filename": "descriptive-document-name"
+  "filename": "issuer-document-type",
+  "document_date": "YYYY-MM or null"
 }}"""
 
         response = ollama.chat(
@@ -1199,7 +1277,9 @@ Respond in JSON format:
             raw_category = result.get("category", "Other")
             tags = result.get("tags", [])
             auto_filename = _sanitize_auto_filename(
-                result.get("filename"), original_filename=filename
+                result.get("filename"),
+                original_filename=filename,
+                document_date=result.get("document_date"),
             )
 
             # Normalize and validate category (strict matching)

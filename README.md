@@ -52,11 +52,16 @@ Paperless-ngx is the most popular self-hosted alternative. Here's how they compa
 - Poppler (for PDF processing)
   - macOS: `brew install poppler`
   - Ubuntu/Debian: `apt-get install poppler-utils`
-  - Windows: Download from [poppler releases](https://github.com/oschwartz10612/poppler-windows/releases/)
+  - Windows: download the latest `Release-*.zip` from [poppler releases](https://github.com/oschwartz10612/poppler-windows/releases/),
+    extract it (e.g. to `C:\poppler`) and add its `Library\bin` folder to PATH
 - Tesseract (for OCR on scanned documents)
   - macOS: `brew install tesseract`
   - Ubuntu/Debian: `apt-get install tesseract-ocr`
-  - Windows: Download from [Tesseract releases](https://github.com/UB-Mannheim/tesseract/wiki)
+  - Windows: run the installer from [Tesseract releases](https://github.com/UB-Mannheim/tesseract/wiki),
+    then add `C:\Program Files\Tesseract-OCR` to PATH
+- Windows only: Poppler, Tesseract and Ghostscript (see [OCR dependencies](#ocr-dependencies))
+  are not added to PATH for you. Open Start, search for "Edit environment variables for
+  your account", select `Path`, click New for each folder, then open a new terminal.
 
 ## How files are stored
 
@@ -113,10 +118,20 @@ cd filefolio
 ```
 
 2. **Create and activate virtual environment**
+
+macOS and Linux:
 ```bash
 python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+source venv/bin/activate
 ```
+
+Windows (PowerShell or Command Prompt):
+```powershell
+python -m venv venv
+venv\Scripts\activate
+```
+If PowerShell refuses with "running scripts is disabled on this system", run
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or use Command Prompt.
 
 3. **Install dependencies**
 ```bash
@@ -321,7 +336,8 @@ The Docker image bundles them.
 
 - macOS: `brew install ghostscript`
 - Debian/Ubuntu: `apt-get install ghostscript`
-- Windows: install Ghostscript from [ghostscript.com](https://ghostscript.com/releases/gsdnld.html)
+- Windows: install Ghostscript from [ghostscript.com](https://ghostscript.com/releases/gsdnld.html),
+  then add its `bin` folder (`C:\Program Files\gs\gs<version>\bin`) to PATH
 
 ## Project structure
 

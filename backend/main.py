@@ -685,23 +685,30 @@ async def upload_pdf(file: UploadFile = File(...)):
     # needs to survive past the point where the file is fully written.
     bytes_written = 0
     first_chunk = True
+    rejection = None
     with file_path.open("wb") as buffer:
         while chunk := await file.read(8192):
             if first_chunk:
                 if chunk[:4] != b"%PDF":
-                    file_path.unlink(missing_ok=True)
-                    raise HTTPException(
+                    rejection = HTTPException(
                         status_code=400, detail="File is not a valid PDF"
                     )
+                    break
                 first_chunk = False
             bytes_written += len(chunk)
             if bytes_written > MAX_UPLOAD_SIZE:
-                file_path.unlink(missing_ok=True)
-                raise HTTPException(
+                rejection = HTTPException(
                     status_code=413,
                     detail=f"File too large. Maximum upload size is {MAX_UPLOAD_SIZE // (1024 * 1024)} MB.",
                 )
+                break
             buffer.write(chunk)
+
+    # Delete a rejected upload only once the file is closed: Windows cannot
+    # delete an open file, which turned these 400/413s into 500s there.
+    if rejection is not None:
+        file_path.unlink(missing_ok=True)
+        raise rejection
 
     return ingest_pdf(file_path, safe_filename)
 
@@ -2355,8 +2362,6 @@ async def restore_backup(file: UploadFile = File(...)):
             while chunk := await file.read(65536):
                 bytes_written += len(chunk)
                 if bytes_written > MAX_RESTORE_SIZE:
-                    temp_backup.close()
-                    os.unlink(temp_backup_path)
                     limit_gb = MAX_RESTORE_SIZE // (1024 * 1024 * 1024)
                     raise HTTPException(
                         status_code=413,
@@ -2370,7 +2375,6 @@ async def restore_backup(file: UploadFile = File(...)):
             file_list = zip_file.namelist()
 
             if "data/documents.db" not in file_list:
-                os.unlink(temp_backup_path)
                 raise HTTPException(
                     status_code=400, detail="Invalid backup: missing database file"
                 )
@@ -2414,9 +2418,6 @@ async def restore_backup(file: UploadFile = File(...)):
                 metadata_content = zip_file.read("backup_metadata.json")
                 metadata = json.loads(metadata_content)
 
-        # Clean up temp backup file
-        os.unlink(temp_backup_path)
-
         # Restart sync service
         sync_service.start()
 
@@ -2448,11 +2449,6 @@ async def restore_backup(file: UploadFile = File(...)):
         }
 
     except ValueError as e:
-        if temp_backup_path is not None:
-            try:
-                os.unlink(temp_backup_path)
-            except OSError:
-                pass
         try:
             sync_service.start()
         except Exception:
@@ -2470,6 +2466,14 @@ async def restore_backup(file: UploadFile = File(...)):
         except Exception:
             pass
         raise HTTPException(status_code=500, detail=f"Restore failed: {str(e)}")
+    finally:
+        # Delete the uploaded zip on every path, once the with-blocks above have
+        # closed it: Windows cannot delete a file that is still open.
+        if temp_backup_path is not None:
+            try:
+                os.unlink(temp_backup_path)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":

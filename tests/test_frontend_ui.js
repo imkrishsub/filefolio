@@ -20,7 +20,8 @@ function extract(name) {
 }
 
 function extractConst(name) {
-    const m = src.match(new RegExp(`\\nconst ${name} = [\\s\\S]*?;\\n`));
+    // \r?: a Windows checkout has CRLF line endings.
+    const m = src.match(new RegExp(`\\nconst ${name} = [\\s\\S]*?;\\r?\\n`));
     assert.ok(m, `app.js should define const ${name}`);
     return m[0];
 }

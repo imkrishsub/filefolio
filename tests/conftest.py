@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from PIL import Image
 import io
+import uuid
 from pypdf import PdfWriter
 
 
@@ -18,13 +19,20 @@ def temp_test_dir():
     """Create a temporary directory for all tests."""
     temp_dir = Path(tempfile.mkdtemp(prefix="filefolio_test_"))
     yield temp_dir
-    shutil.rmtree(temp_dir)
+    # ignore_errors: on Windows a file still held by a background thread (e.g. a
+    # sync-folder scan) cannot be deleted; it is a temp dir, so leave it.
+    shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 @pytest.fixture
 def test_db(temp_test_dir, monkeypatch):
-    """Create a temporary test database."""
-    db_path = temp_test_dir / "test_documents.db"
+    """Create a temporary test database.
+
+    Each test gets its own file. Background threads started by one test (a
+    sync-folder scan, say) may still hold the previous database open, and on
+    Windows an open file can be neither deleted nor safely reused.
+    """
+    db_path = temp_test_dir / f"test_documents_{uuid.uuid4().hex[:8]}.db"
 
     # Patch the database path in the main module
     import backend.main as main
@@ -49,9 +57,11 @@ def test_db(temp_test_dir, monkeypatch):
 
     yield db_path
 
-    # Cleanup
-    if db_path.exists():
-        db_path.unlink()
+    # Cleanup (best effort, see above)
+    try:
+        db_path.unlink(missing_ok=True)
+    except PermissionError:
+        pass
     for d in [temp_test_dir / "uploads", temp_test_dir / "thumbnails"]:
         shutil.rmtree(d, ignore_errors=True)
         d.mkdir(exist_ok=True)

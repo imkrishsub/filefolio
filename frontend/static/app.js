@@ -913,7 +913,9 @@ async function saveDocumentChanges() {
         });
 
         if (!response.ok) {
-            throw new Error('Failed to update document');
+            // Show the server's reason, e.g. "tags must not contain < or >".
+            const detail = await response.json().catch(() => ({}));
+            throw new Error(formatErrorDetail(detail.detail, 'Failed to update document'));
         }
 
         showStatus(t('status.updated'), 'success');
@@ -1521,7 +1523,8 @@ let pdfToolState = { op: null, docId: null };
 function formatErrorDetail(detail, fallback) {
     if (typeof detail === 'string' && detail) return detail;
     if (Array.isArray(detail)) {
-        const msgs = detail.map(d => (d && d.msg) || '').filter(Boolean);
+        // Pydantic prefixes custom validator messages with "Value error, ".
+        const msgs = detail.map(d => ((d && d.msg) || '').replace(/^Value error, /, '')).filter(Boolean);
         if (msgs.length) return msgs.join('; ');
     }
     return fallback;

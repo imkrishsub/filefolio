@@ -25,7 +25,7 @@ function extractConst(name) {
     return m[0];
 }
 
-const fns = ['escapeHtml', 'displayName', 'createDocumentCard', 'pdfToolDownloadName'];
+const fns = ['escapeHtml', 'displayName', 'createDocumentCard', 'pdfToolDownloadName', 'formatErrorDetail'];
 const app = new Function(
     't', 'translateTag', 'translateCategory', 'selectedDocuments',
     [extractConst('PLACEHOLDER_THUMBNAIL'), extractConst('PDF_TOOL_DOWNLOAD_SUFFIX'), ...fns.map(extract)].join('\n') +
@@ -100,7 +100,18 @@ function testSettingsStatusReplacesEarlierMessages() {
     assert.ok(extract('showSettingsStatus').includes('settingsStatus.replaceChildren(messageDiv)'));
 }
 
+function testValidationErrorsReadCleanly() {
+    // Server-side markup rejection (T038 follow-up) reaches the edit dialog.
+    const detail = [{ msg: 'Value error, tags must not contain < or >' }];
+    assert.strictEqual(app.formatErrorDetail(detail, 'fallback'), 'tags must not contain < or >');
+    assert.strictEqual(app.formatErrorDetail('plain', 'fallback'), 'plain');
+    assert.strictEqual(app.formatErrorDetail(undefined, 'fallback'), 'fallback');
+    assert.ok(/formatErrorDetail\(detail\.detail, 'Failed to update document'\)/.test(extract('saveDocumentChanges')),
+        'the edit dialog should show the server reason');
+}
+
 const tests = [
+    testValidationErrorsReadCleanly,
     testPlaceholderThumbnailExists,
     testCardWithoutThumbnailUsesPlaceholderAndCannotLoop,
     testFaviconIsLinkedAndExists,

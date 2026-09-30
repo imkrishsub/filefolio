@@ -2632,3 +2632,75 @@ class TestTagNormalisation:
         assert doc_id not in filtered()
         main.normalize_stored_tags()
         assert doc_id in filtered()
+
+
+class TestServerRejectsMarkup:
+    """Defence in depth behind the frontend escaping (T038 follow-up)."""
+
+    PAYLOAD = "<img src=x onerror=alert(1)>"
+
+    def _upload(self, client, pdf_bytes):
+        return client.post("/upload", files={"file": ("m.pdf", io.BytesIO(pdf_bytes), "application/pdf")}).json()["id"]
+
+    def _doc(self, client, doc_id):
+        return next(d for d in client.get("/documents").json() if d["id"] == doc_id)
+
+    def test_put_rejects_markup_in_tags(self, client, sample_pdf_bytes, mock_ollama_response):
+        doc_id = self._upload(client, sample_pdf_bytes)
+        before = self._doc(client, doc_id)["tags"]
+
+        r = client.put(f"/document/{doc_id}", json={"tags": ["refund", self.PAYLOAD]})
+
+        assert r.status_code == 422
+        assert "tags must not contain < or >" in r.text
+        assert self._doc(client, doc_id)["tags"] == before
+
+    @pytest.mark.parametrize("name", ['x"><img src=x onerror=alert(1)>', "a>b.pdf", "<script>.pdf"])
+    def test_put_rejects_markup_in_filename(self, client, sample_pdf_bytes, mock_ollama_response, name):
+        doc_id = self._upload(client, sample_pdf_bytes)
+
+        r = client.put(f"/document/{doc_id}", json={"auto_filename": name})
+
+        assert r.status_code == 422
+        assert "filename must not contain < or >" in r.text
+
+    def test_put_still_accepts_ordinary_values(self, client, sample_pdf_bytes, mock_ollama_response):
+        doc_id = self._upload(client, sample_pdf_bytes)
+
+        r = client.put(
+            f"/document/{doc_id}",
+            json={"auto_filename": "o'brien & sons \"invoice\".pdf", "tags": ["r&d", "o'brien"]},
+        )
+
+        assert r.status_code == 200
+        doc = self._doc(client, doc_id)
+        assert doc["auto_filename"] == "o'brien & sons \"invoice\".pdf"
+        assert doc["tags"] == ["r&d", "o'brien"]
+
+    def test_model_tags_lose_markup(self, monkeypatch):
+        import backend.main as main
+
+        monkeypatch.setattr(main, "get_existing_tags", lambda: [])
+        monkeypatch.setattr(
+            main.ollama,
+            "chat",
+            lambda **kwargs: {"message": {"content": json.dumps({"category": "Tax", "tags": [self.PAYLOAD, "refund"]})}},
+        )
+        tags, _, _ = main.process_document("text", "scan.pdf")
+        assert tags and not any("<" in t or ">" in t for t in tags)
+        assert "refund" in tags
+
+    def test_stored_markup_tags_are_cleaned_on_startup(self, client, sample_pdf_bytes, mock_ollama_response):
+        import backend.main as main
+
+        doc_id = self._upload(client, sample_pdf_bytes)
+        conn = main.get_db_connection()
+        conn.execute("UPDATE documents SET tags = ? WHERE id = ?", (json.dumps([self.PAYLOAD, "refund"]), doc_id))
+        conn.commit()
+        conn.close()
+
+        main.normalize_stored_tags()
+
+        tags = self._doc(client, doc_id)["tags"]
+        assert not any("<" in t or ">" in t for t in tags)
+        assert "refund" in tags

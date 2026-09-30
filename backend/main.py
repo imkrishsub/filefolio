@@ -40,7 +40,7 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pdf2image import convert_from_path
 from PIL import Image
-from pydantic import BaseModel, conlist
+from pydantic import BaseModel, conlist, field_validator
 from starlette.background import BackgroundTask
 
 
@@ -444,6 +444,22 @@ class UpdateRequest(BaseModel):
     auto_filename: Optional[str] = None
     tags: Optional[List[str]] = None
     category: Optional[ValidCategory] = None
+
+    # The web UI escapes everything it renders, but names and tags also reach
+    # the CLI, MCP clients and backups; refuse markup rather than store it.
+    @field_validator("auto_filename")
+    @classmethod
+    def _no_markup_in_filename(cls, value):
+        if value is not None and _has_markup(value):
+            raise ValueError("filename must not contain < or >")
+        return value
+
+    @field_validator("tags")
+    @classmethod
+    def _no_markup_in_tags(cls, value):
+        if value is not None and any(_has_markup(tag) for tag in value):
+            raise ValueError("tags must not contain < or >")
+        return value
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
@@ -1001,16 +1017,23 @@ def generate_thumbnail(pdf_path: Path, stored_filename: str):
     return None
 
 
+def _has_markup(value: str) -> bool:
+    """True if the text contains an HTML tag delimiter."""
+    return "<" in value or ">" in value
+
+
 def normalize_tag(tag) -> str:
     """Return a tag in the one stored form: lowercase words separated by spaces.
 
     The model returns the same idea as "income-tax", "income_tax" or
     "Income Tax"; storing one form keeps the tag filter free of duplicates and
-    lets existing-tag reuse match. Returns "" for anything unusable.
+    lets existing-tag reuse match. "<" and ">" are dropped too: tags come from
+    model output shaped by document text, so they must never carry markup.
+    Returns "" for anything unusable.
     """
     if not isinstance(tag, str):
         return ""
-    return re.sub(r"[\s_-]+", " ", tag).strip().lower()
+    return re.sub(r"[\s_<>-]+", " ", tag).strip().lower()
 
 
 def normalize_tags(tags) -> list:

@@ -197,6 +197,7 @@ sync_service = SyncFolderService(DB_PATH, UPLOAD_DIR, THUMBNAILS_DIR)
 async def startup_event():
     """Run pending migrations and start the sync folder service."""
     storage.migrate_uploads_to_category_folders(get_db_connection, UPLOAD_DIR)
+    normalize_stored_tags()
     sync_service.start()
 
 
@@ -985,6 +986,64 @@ def generate_thumbnail(pdf_path: Path, stored_filename: str):
     return None
 
 
+def normalize_tag(tag) -> str:
+    """Return a tag in the one stored form: lowercase words separated by spaces.
+
+    The model returns the same idea as "income-tax", "income_tax" or
+    "Income Tax"; storing one form keeps the tag filter free of duplicates and
+    lets existing-tag reuse match. Returns "" for anything unusable.
+    """
+    if not isinstance(tag, str):
+        return ""
+    return re.sub(r"[\s_-]+", " ", tag).strip().lower()
+
+
+def normalize_tags(tags) -> list:
+    """Normalise every tag, dropping empty ones and duplicates, keeping order."""
+    result = []
+    for tag in tags or []:
+        normalized = normalize_tag(tag)
+        if normalized and normalized not in result:
+            result.append(normalized)
+    return result
+
+
+def normalize_stored_tags() -> int:
+    """Rewrite stored tags into normalised form. Safe to run repeatedly.
+
+    Returns the number of documents whose tags changed.
+    """
+    conn = get_db_connection()
+    changed = 0
+    try:
+        try:
+            rows = conn.execute(
+                "SELECT id, tags FROM documents WHERE tags IS NOT NULL AND tags != ''"
+            ).fetchall()
+        except sqlite3.OperationalError as exc:
+            # e.g. a restored backup from a schema without a tags column
+            logger.warning("Skipping tag normalisation: %s", exc)
+            return 0
+        for doc_id, raw in rows:
+            try:
+                tags = json.loads(raw)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+            if not isinstance(tags, list):
+                continue
+            normalized = normalize_tags(tags)
+            if normalized != tags:
+                conn.execute(
+                    "UPDATE documents SET tags = ? WHERE id = ?",
+                    (json.dumps(normalized), doc_id),
+                )
+                changed += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return changed
+
+
 def get_existing_tags():
     """Get all existing tags from the database."""
     conn = get_db_connection()
@@ -1280,7 +1339,7 @@ CRITICAL REQUIREMENT - TAGS MUST BE IN ENGLISH AND PROPERLY FORMATTED:
 - Do NOT copy German words directly into tags
 - Do NOT use years as tags (e.g., avoid "2024", "2023", etc.)
 - Do NOT use very short tags (minimum 3 characters)
-- Use spaces, NOT underscores (e.g., "birth certificate" not "birth_certificate")
+- Use spaces, NOT underscores or hyphens (e.g., "birth certificate" not "birth_certificate" or "birth-certificate")
 - Keep tags lowercase and simple (e.g., "payroll", "salary", "dental care", "reimbursement")
 - DO NOT use generic category names as tags (e.g., do NOT use "invoice", "receipt", "contract",
   "letter", "report", "form", "statement", "tax", "insurance", "document" as tags)
@@ -1373,11 +1432,8 @@ Respond in JSON format:
             # Filter out non-English tags and unwanted patterns
             filtered_tags = []
             for tag in tags:
-                # Normalize: lowercase, strip, replace underscores with spaces
-                tag_normalized = tag.lower().strip().replace("_", " ")
-
-                # Remove extra spaces
-                tag_normalized = re.sub(r"\s+", " ", tag_normalized)
+                # Normalize: lowercase, words separated by single spaces
+                tag_normalized = normalize_tag(tag)
 
                 # Skip empty tags
                 if not tag_normalized:
@@ -1822,7 +1878,7 @@ async def update_document(doc_id: int, updates: UpdateRequest):
 
     if updates.tags is not None:
         update_fields.append("tags = ?")
-        params.append(json.dumps(updates.tags))
+        params.append(json.dumps(normalize_tags(updates.tags)))
 
     if updates.category is not None:
         update_fields.append("category = ?")
@@ -2335,6 +2391,7 @@ async def restore_backup(file: UploadFile = File(...)):
         migration_warning = None
         try:
             storage.migrate_uploads_to_category_folders(get_db_connection, UPLOAD_DIR)
+            normalize_stored_tags()
         except Exception as exc:
             logger.warning("Post-restore upload migration did not complete: %s", exc)
             migration_warning = (

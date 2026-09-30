@@ -2515,3 +2515,95 @@ class TestPdfOcr:
         doc = self._upload(client, multipage_pdf_bytes)
         r = client.post("/pdf/ocr", json={"document_id": doc})
         assert r.status_code == 200 and r.json()["id"] == doc
+
+
+class TestTagNormalisation:
+    """Tags are stored in one form: lowercase words separated by spaces (T035)."""
+
+    def _upload(self, client, pdf_bytes):
+        return client.post("/upload", files={"file": ("t.pdf", io.BytesIO(pdf_bytes), "application/pdf")}).json()["id"]
+
+    def _tags(self, client, doc_id):
+        return next(d for d in client.get("/documents").json() if d["id"] == doc_id)["tags"]
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("income-tax", "income tax"),
+            ("Income Tax", "income tax"),
+            ("birth_certificate", "birth certificate"),
+            ("  dental   care ", "dental care"),
+            ("tax - assessment", "tax assessment"),
+            ("-refund-", "refund"),
+            ("", ""),
+            (None, ""),
+            (42, ""),
+        ],
+    )
+    def test_normalize_tag(self, raw, expected):
+        import backend.main as main
+
+        assert main.normalize_tag(raw) == expected
+
+    def test_normalize_tags_drops_empties_and_duplicates_in_order(self):
+        import backend.main as main
+
+        assert main.normalize_tags(["Income-Tax", "refund", "income tax", " ", "Refund", None]) == [
+            "income tax",
+            "refund",
+        ]
+        assert main.normalize_tags(None) == []
+
+    def test_model_tags_are_normalised(self, monkeypatch):
+        import backend.main as main
+
+        monkeypatch.setattr(main, "get_existing_tags", lambda: [])
+        monkeypatch.setattr(
+            main.ollama,
+            "chat",
+            lambda **kwargs: {
+                "message": {
+                    "content": '{"category": "Tax", "tags": ["income-tax", "Income Tax", "tax_refund"]}'
+                }
+            },
+        )
+        tags, _, _ = main.process_document("Finanzamt Steuerbescheid", "scan.pdf")
+        assert tags == ["income tax", "tax refund"]
+
+    def test_put_normalises_tags(self, client, sample_pdf_bytes, mock_ollama_response):
+        doc_id = self._upload(client, sample_pdf_bytes)
+        r = client.put(f"/document/{doc_id}", json={"tags": ["Income-Tax", "income tax", "Birth_Certificate", "  "]})
+        assert r.status_code == 200
+        assert self._tags(client, doc_id) == ["income tax", "birth certificate"]
+
+    def test_stored_tags_are_rewritten_once(self, client, sample_pdf_bytes, mock_ollama_response):
+        import backend.main as main
+
+        doc_id = self._upload(client, sample_pdf_bytes)
+        conn = main.get_db_connection()
+        conn.execute(
+            "UPDATE documents SET tags = ? WHERE id = ?",
+            (json.dumps(["income-tax", "Income Tax", "refund"]), doc_id),
+        )
+        conn.commit()
+        conn.close()
+
+        assert main.normalize_stored_tags() == 1
+        assert self._tags(client, doc_id) == ["income tax", "refund"]
+        assert main.normalize_stored_tags() == 0
+
+    def test_tag_filter_finds_rewritten_legacy_tags(self, client, sample_pdf_bytes, mock_ollama_response):
+        import backend.main as main
+
+        doc_id = self._upload(client, sample_pdf_bytes)
+        conn = main.get_db_connection()
+        conn.execute("UPDATE documents SET tags = ? WHERE id = ?", (json.dumps(["income-tax"]), doc_id))
+        conn.commit()
+        conn.close()
+
+        def filtered():
+            return [d["id"] for d in client.get("/documents", params={"tags": "income tax"}).json()]
+
+        assert doc_id not in filtered()
+        main.normalize_stored_tags()
+        assert doc_id in filtered()

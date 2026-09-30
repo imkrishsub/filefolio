@@ -11,4 +11,6 @@ services:
     environment:
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2}
+      # Local time zone for upload times and stored filenames, e.g. Europe/Berlin.
+      - TZ=${TZ:-UTC}
     restart: unless-stopped

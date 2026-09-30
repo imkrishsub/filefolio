@@ -169,6 +169,21 @@ the upload.
 OLLAMA_HOST=http://192.168.1.10:11434 docker compose up
 ```
 
+### Time zone (Docker)
+
+The container runs in UTC unless told otherwise, so upload times and the date
+prefix of stored filenames would be off by your offset. Set `TZ` to your
+[time zone name](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones).
+The easiest way on every platform is a file named `.env` next to
+`docker-compose.yml`, which Docker Compose reads automatically. Put this line in
+it, then restart with `docker compose up -d`:
+
+```
+TZ=Europe/Berlin
+```
+
+A manual install uses your computer's time zone and needs no setting.
+
 ## Testing
 
 ```bash

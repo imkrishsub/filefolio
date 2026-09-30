@@ -38,6 +38,8 @@ thumbnails/
 *.db
 *.sqlite
 *.sqlite3
+# Local Docker Compose settings (TZ, PORT, ...)
+.env
 
 # Utility scripts
 regenerate_thumbnails.py

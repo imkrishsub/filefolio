@@ -426,6 +426,94 @@ class TestFilenamePromptConstraints:
         assert auto_filename == "summit-fitness-membership-september-2026.pdf"
 
 
+class TestClassifyCategory:
+    """The category comes from a short, dedicated prompt (T030)."""
+
+    def _classify(self, monkeypatch, answer=None, error=None):
+        from backend import main
+
+        calls = []
+
+        def fake_chat(model, messages, options=None):
+            calls.append({"prompt": messages[0]["content"], "options": options})
+            if error:
+                raise error
+            return {"message": {"content": answer}}
+
+        monkeypatch.setattr(main.ollama, "chat", fake_chat)
+        return main._classify_category("Finanzamt Musterstadt Steuerbescheid 2025"), calls
+
+    def test_every_category_has_a_description(self):
+        from backend import main, storage
+
+        assert set(main.CATEGORY_DESCRIPTIONS) == set(storage.VALID_CATEGORIES)
+
+    def test_prompt_lists_each_category_with_its_description(self, monkeypatch):
+        from backend import main
+
+        _, calls = self._classify(monkeypatch, "Tax")
+        prompt = calls[0]["prompt"]
+        for name, description in main.CATEGORY_DESCRIPTIONS.items():
+            assert f"{name} - {description}" in prompt
+        assert "Finanzamt Musterstadt Steuerbescheid 2025" in prompt
+
+    def test_uses_temperature_zero_for_stable_filing(self, monkeypatch):
+        _, calls = self._classify(monkeypatch, "Tax")
+        assert calls[0]["options"] == {"temperature": 0}
+
+    @pytest.mark.parametrize(
+        "answer,expected",
+        [
+            ("Tax", "Tax"),
+            ("tax.", "Tax"),
+            ("Category: Statement", "Statement"),
+            ("Receipt - it is not an Invoice because it was paid", "Receipt"),
+        ],
+    )
+    def test_parses_the_first_category_named(self, monkeypatch, answer, expected):
+        category, _ = self._classify(monkeypatch, answer)
+        assert category == expected
+
+    @pytest.mark.parametrize("answer", ["I am not sure", "", "Taxes and Statements"])
+    def test_returns_none_when_no_category_is_named(self, monkeypatch, answer):
+        category, _ = self._classify(monkeypatch, answer)
+        assert category is None
+
+    def test_returns_none_when_the_call_fails(self, monkeypatch):
+        category, _ = self._classify(monkeypatch, error=ConnectionError("ollama down"))
+        assert category is None
+
+
+class TestProcessDocumentCategory:
+    """process_document prefers the dedicated classification over the combined prompt."""
+
+    COMBINED = '{"category": "Medical", "tags": ["refund", "income"], "filename": "finanzamt-notice"}'
+
+    def _run(self, monkeypatch, classification):
+        from backend import main
+
+        def fake_chat(model, messages, options=None):
+            if options is None:
+                return {"message": {"content": self.COMBINED}}
+            if isinstance(classification, Exception):
+                raise classification
+            return {"message": {"content": classification}}
+
+        monkeypatch.setattr(main, "get_existing_tags", lambda: [])
+        monkeypatch.setattr(main.ollama, "chat", fake_chat)
+        _, category, _ = main.process_document("Finanzamt Musterstadt Steuerbescheid", "scan.pdf")
+        return category
+
+    def test_dedicated_classification_wins(self, monkeypatch):
+        assert self._run(monkeypatch, "Tax") == "Tax"
+
+    def test_combined_answer_is_kept_when_classification_fails(self, monkeypatch):
+        assert self._run(monkeypatch, ConnectionError("ollama down")) == "Medical"
+
+    def test_combined_answer_is_kept_when_classification_is_unusable(self, monkeypatch):
+        assert self._run(monkeypatch, "no idea") == "Medical"
+
+
 class TestDatabaseFTSIntegration:
     """Tests for full-text search database integration."""
 

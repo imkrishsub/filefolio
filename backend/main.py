@@ -1124,6 +1124,72 @@ def _sanitize_auto_filename(
     return f"{stem}{suffix}{ext}"
 
 
+# One line per category for the classification prompt. Terms in brackets are
+# common German document names, since many users file German paperwork.
+CATEGORY_DESCRIPTIONS = {
+    "Invoice": "a bill from a business that still has to be paid",
+    "Receipt": "proof that something was already paid"
+    " (till receipt, Kassenbon, Quittung, paid order)",
+    "Contract": "an agreement with terms signed by two parties"
+    " (membership, lease, phone or employment contract)",
+    "Statement": "a summary of an account over a period"
+    " (bank, credit card, rent or utility cost settlement)",
+    "Tax": "from a tax authority about the reader's own taxes"
+    " (assessment, tax demand, refund)",
+    "Insurance": "an insurance policy, premium notice or other letter from an insurer",
+    "Medical": "a health record (doctor or hospital letter, lab result, prescription)",
+    "Legal": "from a court or lawyer (summons, judgment, lawyer's warning letter)",
+    "Report": "analysis or findings that are not medical",
+    "Form": "a form to fill in",
+    "Letter": "other correspondence",
+    "Other": "none of the above",
+}
+
+
+def _classify_category(text: str) -> Optional[str]:
+    """Ask the model for the category alone, with a description per category.
+
+    Returns a value from storage.VALID_CATEGORIES, or None when the call fails
+    or the answer names no category, so the caller keeps its own guess.
+    Temperature 0 makes the same document land in the same folder every time.
+    """
+    categories = "\n".join(
+        f"{name} - {CATEGORY_DESCRIPTIONS[name]}"
+        for name in CATEGORY_DESCRIPTIONS
+        if name in storage.VALID_CATEGORIES
+    )
+    prompt = f'''Document:
+"""
+{text[:1000]}
+"""
+
+Which one category describes this document? Categories:
+{categories}
+
+Answer with the category name only.'''
+    try:
+        response = ollama.chat(
+            model=OLLAMA_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            options={"temperature": 0},
+        )
+        answer = response["message"]["content"]
+    except Exception as e:
+        logger.warning("Category classification failed: %s", e)
+        return None
+    if not isinstance(answer, str):
+        return None
+
+    # Take the category named first; the model sometimes adds an explanation
+    # that mentions other categories.
+    found = []
+    for name in storage.VALID_CATEGORIES:
+        match = re.search(rf"\b{name}\b", answer, re.IGNORECASE)
+        if match:
+            found.append((match.start(), name))
+    return min(found)[1] if found else None
+
+
 def process_document(text: str, filename: str):
     """
     Extract metadata from document using local LLM via Ollama.
@@ -1297,6 +1363,12 @@ Respond in JSON format:
                     if valid_cat.lower() in raw_category.lower():
                         category = valid_cat
                         break
+
+            # The category above comes from a long prompt that also asks for
+            # tags and a filename, and llama3.2 drifts badly there. A short,
+            # dedicated question is far more reliable; keep the answer above
+            # only if that call fails.
+            category = _classify_category(text) or category
 
             # Filter out non-English tags and unwanted patterns
             filtered_tags = []

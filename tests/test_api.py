@@ -1463,6 +1463,31 @@ class TestStartupMigration:
         assert (main.UPLOAD_DIR / "Legal" / "2024" / flat.name).exists()
         assert not flat.exists()
 
+    def test_lifespan_runs_startup_and_shutdown(self, test_db, monkeypatch):
+        """Startup and shutdown are wired through lifespan, not the deprecated
+        on_event hooks (which printed a DeprecationWarning on every start)."""
+        from fastapi.testclient import TestClient
+
+        import backend.main as main
+
+        calls = []
+
+        async def startup():
+            calls.append("startup")
+
+        async def shutdown():
+            calls.append("shutdown")
+
+        monkeypatch.setattr(main, "startup_event", startup)
+        monkeypatch.setattr(main, "shutdown_event", shutdown)
+
+        with TestClient(main.app) as client:
+            assert calls == ["startup"]
+            assert client.get("/documents").status_code == 200
+        assert calls == ["startup", "shutdown"]
+        assert main.app.router.on_startup == []
+        assert main.app.router.on_shutdown == []
+
     def test_flat_legacy_document_is_organised(self, test_db, temp_test_dir):
         import sqlite3
 

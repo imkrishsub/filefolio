@@ -26,6 +26,7 @@ import tempfile
 import urllib.parse
 import uuid
 import zipfile
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import List, Literal, Optional
@@ -42,7 +43,23 @@ from PIL import Image
 from pydantic import BaseModel, conlist
 from starlette.background import BackgroundTask
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app):
+    """Run startup work before serving and shutdown work after.
+
+    Replaces the deprecated @app.on_event hooks, which printed a
+    DeprecationWarning on every start. The handlers are looked up when the
+    app starts, so they can be defined further down.
+    """
+    await startup_event()
+    try:
+        yield
+    finally:
+        await shutdown_event()
+
+
+app = FastAPI(lifespan=lifespan)
 
 logger = logging.getLogger(__name__)
 
@@ -192,8 +209,7 @@ except ModuleNotFoundError:
 sync_service = SyncFolderService(DB_PATH, UPLOAD_DIR, THUMBNAILS_DIR)
 
 
-# Startup and shutdown events
-@app.on_event("startup")
+# Startup and shutdown work, run by lifespan() above
 async def startup_event():
     """Run pending migrations and start the sync folder service."""
     storage.migrate_uploads_to_category_folders(get_db_connection, UPLOAD_DIR)
@@ -201,7 +217,6 @@ async def startup_event():
     sync_service.start()
 
 
-@app.on_event("shutdown")
 async def shutdown_event():
     """Stop the sync folder service when the app shuts down."""
     sync_service.stop()

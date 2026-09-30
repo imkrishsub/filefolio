@@ -23,11 +23,11 @@ function extract(name) {
 
 const fns = ['escapeHtml', 'displayName', 'createDocumentCard', 'createDocumentRow'];
 const load = new Function(
-    't', 'translateTag', 'translateCategory', 'selectedDocuments',
+    't', 'translateTag', 'translateCategory', 'selectedDocuments', 'PLACEHOLDER_THUMBNAIL',
     fns.map(extract).join('\n') + `\nreturn { ${fns.join(', ')} };`
 );
 const identity = x => x;
-const app = load(identity, identity, identity, new Set());
+const app = load(identity, identity, identity, new Set(), '/static/placeholder.svg');
 
 const PAYLOAD = `x"><img src=x onerror=alert(1)>'); alert(2);//`;
 const evilDoc = {
@@ -93,7 +93,8 @@ function testOtherSinksEscape() {
     assert.ok(/data-tag="\$\{escapeHtml\(tag\)\}">\$\{escapeHtml\(tag\)\}/.test(src), 'tag suggestions should escape');
     assert.ok(/\$\{escapeHtml\(tag\)\}\s*<button type="button" class="tag-remove" data-tag="\$\{escapeHtml\(tag\)\}"/.test(src),
         'selected tag pills should escape');
-    assert.ok(src.includes('<span>${escapeHtml(folder.source_path)}</span>'), 'sync folder path should escape');
+    assert.ok(src.includes('<span title="${escapeHtml(folder.source_path)}">${escapeHtml(folder.source_path)}</span>'),
+        'sync folder path and its tooltip should escape');
 }
 
 const tests = [

@@ -10,9 +10,10 @@ TESTS_DIR = Path(__file__).resolve().parent
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node.js not installed")
-def test_frontend_escaping():
+@pytest.mark.parametrize("script", ["test_frontend_escaping.js", "test_frontend_ui.js"])
+def test_frontend_script(script):
     result = subprocess.run(
-        ["node", str(TESTS_DIR / "test_frontend_escaping.js")],
+        ["node", str(TESTS_DIR / script)],
         capture_output=True,
         text=True,
     )

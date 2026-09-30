@@ -108,20 +108,25 @@ header p {
     font-size: 1.1rem;
 }
 
+/* A plain link rather than Ko-fi's hosted button image: the image cannot be
+   translated and would make every page load contact a third party. */
 .kofi-link {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
     margin-top: 1rem;
-    opacity: 0.9;
-    transition: opacity 0.2s ease;
+    padding: 0.4rem 0.9rem;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    text-decoration: none;
+    transition: color 0.2s ease, border-color 0.2s ease;
 }
 
 .kofi-link:hover {
-    opacity: 1;
-}
-
-.kofi-link img {
-    height: 36px;
-    border: 0;
+    color: var(--accent-color);
+    border-color: var(--accent-color);
 }
 
 /* Top Right Controls */
@@ -1412,6 +1417,27 @@ body.dark-mode .icon-btn .sun-icon {
     top: 10px;
     left: 10px;
     z-index: 10;
+}
+
+/* On grid cards the checkbox sits over the thumbnail and would hide the start
+   of the document text, so show it only when it is useful. Touch screens have
+   no hover, so they always show it. */
+.document-card .document-checkbox {
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.document-card:hover .document-checkbox,
+.document-card:focus-within .document-checkbox,
+.document-card.selected .document-checkbox,
+.selection-active .document-card .document-checkbox {
+    opacity: 1;
+}
+
+@media (hover: none) {
+    .document-card .document-checkbox {
+        opacity: 1;
+    }
 }
 
 .doc-checkbox {

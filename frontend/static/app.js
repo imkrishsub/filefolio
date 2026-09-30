@@ -256,23 +256,29 @@ async function handleFiles(files) {
         return;
     }
 
-    for (const file of pdfFiles) {
-        await uploadFile(file);
+    // Show a row for every file up front, so a batch shows what is still
+    // waiting, then upload one at a time. Rows stay until the whole batch is
+    // done; removing each one as it finished left only the last row visible.
+    const rows = pdfFiles.map(file => createUploadRow(file));
+    const results = [];
+    for (let i = 0; i < pdfFiles.length; i++) {
+        results.push(await uploadFile(pdfFiles[i], rows[i]));
     }
+    rows.forEach((row, i) => {
+        setTimeout(() => row.remove(), results[i] ? 3000 : 5000);
+    });
 }
 
-// Upload single file
-async function uploadFile(file) {
-    const formData = new FormData();
-    formData.append('file', file);
+let uploadRowCounter = 0;
 
-    // Create progress bar
-    const progressId = 'progress-' + Date.now();
+// Create the progress row for one file, in the waiting state
+function createUploadRow(file) {
+    const progressId = `progress-${++uploadRowCounter}`;
     const progressHtml = `
         <div id="${progressId}" class="upload-progress">
             <div class="upload-progress-header">
                 <span class="upload-filename">${escapeHtml(file.name)}</span>
-                <span class="upload-status">${t('upload.uploading')}</span>
+                <span class="upload-status">${t('upload.queued')}</span>
             </div>
             <div class="progress-bar">
                 <div class="progress-fill" style="width: 0%"></div>
@@ -280,9 +286,17 @@ async function uploadFile(file) {
         </div>
     `;
     statusDiv.insertAdjacentHTML('beforeend', progressHtml);
-    const progressElement = document.getElementById(progressId);
+    return document.getElementById(progressId);
+}
+
+// Upload single file; returns true on success
+async function uploadFile(file, progressElement) {
+    const formData = new FormData();
+    formData.append('file', file);
+
     const progressFill = progressElement.querySelector('.progress-fill');
     const statusText = progressElement.querySelector('.upload-status');
+    statusText.textContent = t('upload.uploading');
 
     try {
         // Use XMLHttpRequest for progress tracking
@@ -333,11 +347,8 @@ async function uploadFile(file) {
         statusText.textContent = t('upload.complete');
         progressElement.classList.add('success');
 
-        setTimeout(() => {
-            progressElement.remove();
-        }, 3000);
-
         loadDocuments();
+        return true;
     } catch (error) {
         // Check if it's a duplicate error (409 Conflict)
         if (error.message.includes('Duplicate file detected')) {
@@ -353,10 +364,7 @@ async function uploadFile(file) {
         }
 
         progressElement.classList.add('error');
-
-        setTimeout(() => {
-            progressElement.remove();
-        }, 5000);
+        return false;
     }
 }
 
@@ -589,10 +597,13 @@ function renderDocuments() {
     }
 }
 
+// Shown when a document has no thumbnail or its thumbnail fails to load.
+const PLACEHOLDER_THUMBNAIL = '/static/placeholder.svg';
+
 // Create document card HTML
 function createDocumentCard(doc) {
     const tags = doc.tags.map(tag => `<span class="tag">${escapeHtml(translateTag(tag))}</span>`).join('');
-    const thumbnailUrl = doc.thumbnail || '/static/placeholder.png';
+    const thumbnailUrl = doc.thumbnail || PLACEHOLDER_THUMBNAIL;
     const isSelected = selectedDocuments.has(doc.id);
     const translatedCategory = translateCategory(doc.category);
     const name = escapeHtml(displayName(doc));
@@ -602,7 +613,7 @@ function createDocumentCard(doc) {
             <div class="document-checkbox">
                 <input type="checkbox" class="doc-checkbox" data-doc-id="${doc.id}" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation(); toggleDocumentSelection(${doc.id})">
             </div>
-            <img src="${escapeHtml(thumbnailUrl)}" alt="${name}" class="document-thumbnail loading" onclick="previewDocument(${doc.id})" style="cursor: pointer;" onerror="this.src='/static/placeholder.png'; this.classList.remove('loading'); this.classList.add('loaded');" onload="this.classList.remove('loading'); this.classList.add('loaded');">
+            <img src="${escapeHtml(thumbnailUrl)}" alt="${name}" class="document-thumbnail loading" onclick="previewDocument(${doc.id})" style="cursor: pointer;" onerror="this.onerror = null; this.src = PLACEHOLDER_THUMBNAIL; this.classList.remove('loading'); this.classList.add('loaded');" onload="this.classList.remove('loading'); this.classList.add('loaded');">
             <div class="document-content" onclick="previewDocument(${doc.id})" style="cursor: pointer;">
                 <div class="document-header">
                     <div class="document-title">
@@ -1006,7 +1017,8 @@ function showSettingsStatus(message, type) {
     messageDiv.className = `status-message ${type}`;
     messageDiv.textContent = message;
 
-    settingsStatus.appendChild(messageDiv);
+    // Replace any earlier message: an old error next to a new success is misleading.
+    settingsStatus.replaceChildren(messageDiv);
 
     // Auto-remove after 5 seconds
     setTimeout(() => {
@@ -1026,6 +1038,10 @@ function toggleDocumentSelection(docId) {
 
 // Update selection UI (button visibility and checkbox states)
 function updateSelectionUI() {
+    // Card checkboxes stay hidden over the thumbnail until hover or while a
+    // selection is in progress (see .selection-active in style.css).
+    document.body.classList.toggle('selection-active', selectedDocuments.size > 0);
+
     const downloadBtn = document.getElementById('download-selected-btn');
     const downloadBtnText = document.getElementById('download-btn-text');
     const mergeBtn = document.getElementById('merge-selected-btn');
@@ -1228,7 +1244,7 @@ async function loadSyncFolders() {
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
                         </svg>
-                        <span>${escapeHtml(folder.source_path)}</span>
+                        <span title="${escapeHtml(folder.source_path)}">${escapeHtml(folder.source_path)}</span>
                     </div>
                     <div class="folder-status">
                         <span class="status-badge ${folder.is_watching ? 'watching' : 'paused'}">
@@ -1567,6 +1583,21 @@ const PDF_TOOL_CONFIG = {
     ocr:          { pages: false, degrees: false, download: false, explainer: 'pdf.ocr_explainer' },
 };
 
+const PDF_TOOL_DOWNLOAD_SUFFIX = {
+    merge: 'merged',
+    split: 'split',
+    extract: 'pages',
+    delete_pages: 'edited',
+};
+
+// Name a "download only" result after the document it came from,
+// e.g. "stadtwerke-electricity-bill-pages.pdf" rather than "extract.pdf".
+function pdfToolDownloadName(op, doc, isZip) {
+    const stem = doc ? displayName(doc).replace(/\.pdf$/i, '') : 'document';
+    const suffix = PDF_TOOL_DOWNLOAD_SUFFIX[op] || op;
+    return `${stem}-${suffix}${isZip ? '.zip' : '.pdf'}`;
+}
+
 function openPdfTool(op, docId = null) {
     if (op === 'merge' && selectedDocuments.size < 2) {
         showStatus(t('pdf.failed'), 'error');
@@ -1645,7 +1676,8 @@ if (pdfToolForm) {
                 const objectUrl = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = objectUrl;
-                a.download = ct.includes('zip') ? 'split.zip' : `${op}.pdf`;
+                const sourceId = op === 'merge' ? Array.from(selectedDocuments)[0] : docId;
+                a.download = pdfToolDownloadName(op, findDocument(sourceId), ct.includes('zip'));
                 document.body.appendChild(a);
                 a.click();
                 window.URL.revokeObjectURL(objectUrl);

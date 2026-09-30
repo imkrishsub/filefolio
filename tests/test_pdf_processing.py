@@ -67,6 +67,20 @@ class TestPDFTextExtraction:
         text = reader.pages[0].extract_text()
         assert isinstance(text, str)
 
+    def test_importing_pypdf_crypto_prints_no_warning(self):
+        """pypdf 3.17 imported ARC4 from its old place in cryptography, which
+        printed a CryptographyDeprecationWarning as the first line of every
+        server start. Run in a fresh interpreter: the import is cached here."""
+        import subprocess
+        import sys
+
+        result = subprocess.run(
+            [sys.executable, "-W", "error", "-c", "import pypdf, pypdf._crypt_providers"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+
 
 class TestThumbnailGeneration:
     """Tests for thumbnail generation."""
